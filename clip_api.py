@@ -5,6 +5,7 @@ from pydantic import BaseModel,Field
 import clip_db_handler
 from clip_db_handler import FileMeta, PublicFileMeta
 from fastapi.responses import FileResponse
+from fastapi import Response
 
 ALLOWED_SLOTS = {0,1,2}
 PRE_EXISTING_FILES_SLOT = -1
@@ -17,27 +18,29 @@ async def initialize_system():
     """
     await clip_db_handler.setup_db()
 
-@api.get("/files/{uuid}")
-async def get_file_meta(uuid: str) -> FileMeta:
+@api.get("/files/{slot}")
+async def get_file_meta(slot: int) -> PublicFileMeta:
     """get metadata of file from db
 
     Args:
-        uuid (str): uuid of file
+        slot (int): 
 
     Raises:
-        HTTPException: 404 not found if file not found
+        HTTPException: 400 if illegal slot
 
     Returns:
         FileMeta: metadata of file
     """
-    to_ret = await clip_db_handler.get_file_meta(uuid)
+    if slot not in ALLOWED_SLOTS:
+        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
+    to_ret = await clip_db_handler.get_file_meta_in_slot(slot)
     if to_ret:
         return to_ret
     else:
-        raise HTTPException(status_code=404, detail="file not found")
+        return Response(status_code=204)
     
-@api.get("/files/{uuid}/download")
-async def get_file_data(uuid: str) -> FileResponse:
+@api.get("/files/{slot}/download")
+async def get_file_data(slot: int) -> FileResponse:
     """get a file from db
 
     Args:
@@ -49,7 +52,9 @@ async def get_file_data(uuid: str) -> FileResponse:
     Returns:
         FileResponse: the wanted file
     """
-    file_meta = await clip_db_handler.get_file_meta(uuid)
+    if slot not in ALLOWED_SLOTS:
+        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
+    file_meta = await clip_db_handler.get_file_meta_in_slot(slot)
     if file_meta:
         file_response = FileResponse(path=file_meta.file_path,
                                     filename=file_meta.file_name,
@@ -61,7 +66,7 @@ async def get_file_data(uuid: str) -> FileResponse:
         
                 
 @api.get("/files")
-async def get_all_files_meta(first_n: int = 0) -> List[FileMeta]:
+async def get_all_files_meta(with_pre_existing: bool = False) -> List[PublicFileMeta]:
     """returns all the metadata of files from a given index
 
     Args:
@@ -70,9 +75,9 @@ async def get_all_files_meta(first_n: int = 0) -> List[FileMeta]:
     Returns:
         List[FileMeta]: a list of the metadata of all files
     """
-    return await clip_db_handler.get_all_files_meta()
+    return await clip_db_handler.get_all_files_meta(with_pre_existing)
 
-async def add_file_to_taken_slot(uploaded_file: UploadFile, file_in_slot: FileMeta) -> FileMeta:
+async def add_file_to_taken_slot(uploaded_file: UploadFile, file_in_slot: FileMeta) -> PublicFileMeta:
     """makes sure user wants to replace
     replace
 
@@ -88,11 +93,11 @@ async def add_file_to_taken_slot(uploaded_file: UploadFile, file_in_slot: FileMe
     """
     # TODO: ask user if wants to replace
     return await replace_file(uuid=file_in_slot.file_uuid,
-                        new_file=upload_file)
+                        new_file=uploaded_file)
 
 
 @api.post("/files")
-async def upload_file(uploaded_file: UploadFile, slot: int) -> FileMeta:
+async def upload_file(uploaded_file: UploadFile, slot: int) -> PublicFileMeta:
     """upload a file to server
 
     Args:
@@ -118,8 +123,8 @@ async def upload_file(uploaded_file: UploadFile, slot: int) -> FileMeta:
             raise HTTPException(status_code=500, detail="unable to upload file")
     
 
-@api.put("/files/{uuid}/replace")
-async def replace_file(uuid: str, new_file: UploadFile) -> FileMeta:
+@api.put("/files/{slot}/replace")
+async def replace_file(slot: int, new_file: UploadFile) -> PublicFileMeta:
     """
     replaces a file in the server
     Args:
@@ -132,7 +137,9 @@ async def replace_file(uuid: str, new_file: UploadFile) -> FileMeta:
     Returns:
         File: the file that was added, including id
     """
-    added_file = await clip_db_handler.replace_file(uuid,new_file)
+    if slot not in ALLOWED_SLOTS:
+        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
+    added_file = await clip_db_handler.replace_file(slot,new_file)
     if not added_file:
         print("file was not replaced")
         raise HTTPException(status_code=404, detail="file not found")
@@ -140,8 +147,8 @@ async def replace_file(uuid: str, new_file: UploadFile) -> FileMeta:
         return added_file
     
         
-@api.delete("/files/{uuid}")
-async def remove_file(uuid: str) -> FileMeta:
+@api.delete("/files/{slot}")
+async def remove_file(slot: int) -> PublicFileMeta:
     """deletes a file based on uuid
 
     Args:
@@ -152,7 +159,10 @@ async def remove_file(uuid: str) -> FileMeta:
 
     Returns:
         FileMeta: metadata of file that was removed
-    """    
+    """
+    if slot not in ALLOWED_SLOTS:
+        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
+    uuid = clip_db_handler.get_file_meta_in_slot(slot).file_uuid
     removed = await clip_db_handler.remove_file(uuid)
     if removed:
         return removed

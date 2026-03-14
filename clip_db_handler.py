@@ -18,15 +18,16 @@ class PublicFileMeta(BaseModel):
     file_name: str = Field(..., min_length=1, max_length=512, description="file name")
     file_type: str = Field(..., description="file type")
     file_size: int = Field(..., description="file size in bytes")
+    file_uuid: str = Field(..., min_length=1, max_length=512, description="file unique id")
+    file_slot: int = Field(..., description="serial number of file")
     
 
 class FileMeta(PublicFileMeta):
     """
     PublicFileMeta with internal server info
     """
-    file_slot: int = Field(..., description="serial number of file")
     file_path: str = Field(..., min_length=1, max_length=512, description="file path")
-    file_uuid: str = Field(..., min_length=1, max_length=512, description="file unique id")
+    
 
 class IllegalSlotError(Exception):
     """
@@ -117,7 +118,7 @@ async def setup_db():
             pass
             
 
-async def get_file_meta(uuid: str) -> FileMeta:
+async def get_file_meta(uuid: str) -> PublicFileMeta:
     # TODO: add slot choosing
     """gets a specific file by uuid
 
@@ -131,7 +132,7 @@ async def get_file_meta(uuid: str) -> FileMeta:
     doc = await files_collection.find_one({"file_uuid": uuid}, {"id_": 0})
     if doc:
         print(f"    found file: {FileMeta(**doc).file_name}")
-        return FileMeta(**doc)
+        return PublicFileMeta(FileMeta(**doc))
     else:
         print(f"    no document matching uuid")
         return None
@@ -175,7 +176,7 @@ async def get_file_path(uuid: str) -> str:
         return None
         
 
-async def get_all_files_meta(first_n: int = 0) -> List[FileMeta]:
+async def get_all_files_meta(with_pre_existing: bool = False) -> List[FileMeta]:
     """returns all the files from a given index, if not given returns all
 
     Args:
@@ -184,16 +185,28 @@ async def get_all_files_meta(first_n: int = 0) -> List[FileMeta]:
     Returns:
         List[File]: a list of the files
     """
-    print(f"getting all files meta from {first_n}")
-    cursor = files_collection.find({},
-                                   {"_id": 0})
-    files_dict = await cursor.to_list()
-    files_filemeta = []
-    for file_dict in files_dict:
-        files_filemeta.append(FileMeta(**file_dict))
-    for filemeta in files_filemeta[first_n:]:
-        print(f"    {filemeta}")
-    return files_filemeta[first_n:]
+    if with_pre_existing:
+        print(f"getting all files meta including pre existing files")
+        cursor = files_collection.find({},
+                                    {"_id": 0})
+        files_dict = await cursor.to_list()
+        files_filemeta = []
+        for file_dict in files_dict:
+            files_filemeta.append(FileMeta(**file_dict))
+            for file_meta in files_filemeta:
+                print(f"    {file_meta}")
+        return files_filemeta
+    else:
+        print(f"getting all files meta without pre existing files")
+        cursor = files_collection.find({"file_slot": {"$ne": -1}},
+                                    {"_id": 0})
+        files_dict = await cursor.to_list()
+        files_filemeta = []
+        for file_dict in files_dict:
+            files_filemeta.append(FileMeta(**file_dict))
+            for file_meta in files_filemeta:
+                print(f"    {file_meta}")
+        return files_filemeta
 
 
 
@@ -245,7 +258,7 @@ async def add_file(uploaded_file: UploadFile, slot: int)  -> FileMeta:
         print("error: ", e)
 
 
-async def replace_file(uuid: str, new_file: UploadFile) -> FileMeta:
+async def replace_file(slot: int, new_file: UploadFile) -> FileMeta:
     """replace a file on server
 
     Args:
@@ -256,7 +269,10 @@ async def replace_file(uuid: str, new_file: UploadFile) -> FileMeta:
         FileMeta: metadata of new file on server. None if no file with uuid given
     """
     print("replacing uuid: ", uuid, " and putting: ", new_file)
-    removed = await remove_file(uuid)
+    if slot not in ALLOWED_SLOTS:
+        raise IllegalSlotError(f"slot {slot} given is illegal value, not in {ALLOWED_SLOTS}")
+    file_in_slot = await get_file_meta_in_slot(slot)
+    removed = await remove_file(file_in_slot.file_uuid)
     print(f"    removed: ", removed)
     if removed:
         added_file = await add_file(uploaded_file=new_file, slot=int(removed['file_slot']))
