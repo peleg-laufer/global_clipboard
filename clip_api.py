@@ -92,7 +92,7 @@ async def add_file_to_taken_slot(uploaded_file: UploadFile, file_in_slot: FileMe
         _type_: _description_
     """
     # TODO: ask user if wants to replace
-    return await replace_file(uuid=file_in_slot.file_uuid,
+    return await replace_file(slot=file_in_slot.file_slot,
                         new_file=uploaded_file)
 
 

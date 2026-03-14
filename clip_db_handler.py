@@ -73,20 +73,12 @@ async def setup_db():
     print(f"    files on folder:")
     for filename in files_in_folder:
         print(f"        {filename}")
-    files_on_db = await get_all_files_meta()
+    files_on_db = await get_all_files_meta(True)
     print(f"    files on db: ")
     for file_meta in files_on_db:
         print(f"        ", file_meta.file_name)
-    print(f"    deleting wrong metas in db")
-    # verify db and deleting wrong metas:
-    for file_meta in files_on_db:
-        if not os.path.exists(file_meta.file_path):
-            print(f"        deleting ", file_meta.file_name, " from db")
-            await remove_file(file_meta.file_uuid)  # TODO: not removing, debug
-
-    # TODO: verify legal slots, no duplicates of slots
-
-    # verify file directory and adding missing files to db:
+    
+    # adding missing files in db:
     print("     adding missing files to db")
     for file_name in files_in_folder:
         print("         checking ", file_name)
@@ -95,7 +87,8 @@ async def setup_db():
         matching_files_in_db = await files_collection.find({"file_path": file_path}).to_list(None)
         print("             db documents matching path: ")
         print("             ", matching_files_in_db)
-        if len(matching_files_in_db) == 0:
+        if len(matching_files_in_db) == 0:  # not on db
+            # adding to db
             # finding mime type of file
             print("             no db documents matching file")
             file_mime_type = mimetypes.guess_type(file_name)[0]
@@ -114,12 +107,38 @@ async def setup_db():
             inserted_meta = await files_collection.insert_one(missing_file_meta.model_dump())
             print("             added ", inserted_meta, " to db")
         elif len(matching_files_in_db) >= 2:
-            # TODO: delete duplicates
-            pass
+            # delete duplicates
+            for matching_file in matching_files_in_db[1:]:
+                files_collection.delete_one({"file_path": file_path})
+        print(f"    deleting wrong metas in db")
+
+    # deleting wrong metas:
+    slots = {0: 0,
+             1: 0,
+             2: 0}
+    for file_meta in files_on_db:
+        if not os.path.exists(file_meta.file_path):
+            print(f"        deleting ", file_meta.file_name, " from db")
+            await remove_file(file_meta.file_uuid)
+        elif (file_meta.file_slot not in ALLOWED_SLOTS) or file_meta.file_slot != PRE_EXISTING_FILES_SLOT:  # illegal slot
+            query_filter = {'file_uuid' : file_meta.file_uuid}
+            update_operation = { '$set' : 
+                {'file_slot': PRE_EXISTING_FILES_SLOT}
+            }
+            result = files_collection.update_one(query_filter, update_operation)
+        else:
+            slots[file_meta.file_slot] += 1
+            if slots[file_meta.file_slot] >= 2:  # more than 1 file in slot
+                query_filter = {'file_uuid' : file_meta.file_uuid}
+                update_operation = { '$set' : 
+                    {'file_slot': PRE_EXISTING_FILES_SLOT}
+                }
+                result = files_collection.update_one(query_filter, update_operation)
+
+
             
 
 async def get_file_meta(uuid: str) -> PublicFileMeta:
-    # TODO: add slot choosing
     """gets a specific file by uuid
 
     Args:
@@ -283,7 +302,6 @@ async def replace_file(slot: int, new_file: UploadFile) -> FileMeta:
     
         
 async def remove_file(uuid: str) -> FileMeta:
-    # TODO: not working, debug
     """removes a file based on uuid
 
     Args:
