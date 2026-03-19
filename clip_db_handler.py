@@ -198,6 +198,23 @@ async def get_file_path(uuid: str) -> str:
         return None
         
 
+async def get_pre_existing_files_meta() -> List[PublicFileMeta]:
+    """returns metadata of all pre-existing files (files not assigned to any slot)
+
+    Returns:
+        List[PublicFileMeta]: metadata of all pre-existing files
+    """
+    print(f"getting pre-existing files meta")
+    cursor = files_collection.find({"file_slot": PRE_EXISTING_FILES_SLOT}, {"_id": 0})
+    files_dict = await cursor.to_list()
+    files_filemeta = []
+    for file_dict in files_dict:
+        files_filemeta.append(PublicFileMeta(**FileMeta(**file_dict).model_dump()))
+    for file_meta in files_filemeta:
+        print(f"    {file_meta}")
+    return files_filemeta
+
+
 async def get_all_files_meta(with_pre_existing: bool = False) -> List[FileMeta]:
     """returns all the files from a given index, if not given returns all
 

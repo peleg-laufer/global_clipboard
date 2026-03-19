@@ -66,6 +66,16 @@ async def get_file_data(slot: int) -> FileResponse:
         raise HTTPException(status_code=404, detail="file not found")
         
                 
+@api.get("/files/pre-existing")
+async def get_pre_existing_files_meta() -> List[PublicFileMeta]:
+    """returns metadata of all pre-existing files (not assigned to any slot)
+
+    Returns:
+        List[PublicFileMeta]: metadata of all pre-existing files
+    """
+    return await clip_db_handler.get_pre_existing_files_meta()
+
+
 @api.get("/files")
 async def get_all_files_meta(with_pre_existing: bool = False) -> List[PublicFileMeta]:
     """returns all the metadata of files from a given index
