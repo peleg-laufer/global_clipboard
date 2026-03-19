@@ -1,3 +1,4 @@
+# TODO:fix dcumentation
 from fastapi import FastAPI, HTTPException, File, UploadFile, Request
 from typing import List, Optional
 from enum import IntEnum
@@ -162,8 +163,10 @@ async def remove_file(slot: int) -> PublicFileMeta:
     """
     if slot not in ALLOWED_SLOTS:
         raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
-    uuid = clip_db_handler.get_file_meta_in_slot(slot).file_uuid
-    removed = await clip_db_handler.remove_file(uuid)
+    file_meta = await clip_db_handler.get_file_meta_in_slot(slot)
+    if not file_meta:
+        raise HTTPException(status_code=404, detail="file not found")
+    removed = await clip_db_handler.remove_file(file_meta.file_uuid)
     if removed:
         return removed
     else:
