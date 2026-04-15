@@ -6,9 +6,10 @@ import clip_db_handler
 from clip_db_handler import FileMeta, PublicFileMeta
 from fastapi.responses import FileResponse
 from fastapi import Response
+import constants
 
-ALLOWED_SLOTS = {0,1,2}
-PRE_EXISTING_FILES_SLOT = -1
+ALLOWED_SLOTS = constants.ALLOWED_SLOTS
+PRE_EXISTING_FILES_SLOT = constants.PRE_EXISTING_FILES_SLOT
 api = FastAPI()
 
 @api.on_event("startup")

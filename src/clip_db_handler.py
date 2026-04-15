@@ -7,6 +7,7 @@ import uuid
 from pymongo import AsyncMongoClient
 import asyncio
 import mimetypes
+import constants
 
 print("RUNNING FROM THIS EXACT FILE:")
 print(os.path.abspath(__file__))
@@ -54,9 +55,10 @@ class IllegalSlotError(Exception):
 
 FILES_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "files")
 print("files path: ", FILES_PATH)
-ALLOWED_SLOTS = {0,1,2}
-PRE_EXISTING_FILES_SLOT = -1
-ALLOWED_TEXT_POSITIONS = {0,1,2,3,4}
+ALLOWED_SLOTS = constants.ALLOWED_SLOTS
+PRE_EXISTING_FILES_SLOT = constants.PRE_EXISTING_FILES_SLOT
+ALLOWED_TEXT_POSITIONS = constants.ALLOWED_TEXT_POSITIONS
+
 CONNECTION_STRING = "mongodb://localhost:27017/"
 client = AsyncMongoClient(CONNECTION_STRING)
 db = client["clipboard_db"]
@@ -295,7 +297,7 @@ async def get_file_meta_in_slot(slot: int) -> FileMeta:
     print(f"finding FileMeta in slot: {slot}")
     if slot not in ALLOWED_SLOTS:
         raise IllegalSlotError(f"slot {slot} given is illegal value, not in allowed slots: {ALLOWED_SLOTS}")
-    doc = await files_collection.find_one({"file_slot": slot}, {"id_": 0})
+    doc = await files_collection.find_one({"file_slot": slot}, {"_id": 0})
     if doc:
         print(f"    found file in slot: {FileMeta(**doc).file_name}")
         return FileMeta(**doc)
