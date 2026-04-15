@@ -218,7 +218,7 @@ async def files_collection_setup_and_validation():
             new_file_uuid = str(uuid.uuid4())
             # renaming file to uuid
             ext = os.path.splitext(file_name)[1]
-            new_file_path = os.path.join(FILES_PATH, new_file_uuid + '.' + ext)
+            new_file_path = os.path.join(FILES_PATH, new_file_uuid + ext)
             os.rename(file_path, new_file_path)
             # constracting missing FileMeta
             missing_file_meta = FileMeta(file_name=file_name,
@@ -233,8 +233,8 @@ async def files_collection_setup_and_validation():
             # delete duplicates
             for matching_file in matching_files_in_db[1:]:
                 await files_collection.delete_one({"file_path": file_path})
-        print(f"    deleting wrong metas in db")
-
+    
+    print(f"    deleting wrong metas in db")
     # deleting wrong metas:
     slots = {0: 0,
              1: 0,
@@ -248,7 +248,6 @@ async def files_collection_setup_and_validation():
             update_operation = { '$set' : 
                 {'file_slot': PRE_EXISTING_FILES_SLOT}
             }
-
             result = await files_collection.update_one(query_filter, update_operation)
         else:
             if file_meta.file_slot == PRE_EXISTING_FILES_SLOT:
@@ -273,7 +272,7 @@ async def get_file_meta(uuid: str) -> PublicFileMeta:
         PublicFileMeta | None: Metadata of the file, or None if not found.
     """
     print(f"finding meta of uuid: {uuid}")
-    doc = await files_collection.find_one({"file_uuid": uuid}, {"id_": 0})
+    doc = await files_collection.find_one({"file_uuid": uuid}, {"_id": 0})
     if doc:
         print(f"    found file: {FileMeta(**doc).file_name}")
         return PublicFileMeta(**FileMeta(**doc).model_dump())
@@ -434,7 +433,7 @@ async def replace_file(slot: int, new_file: UploadFile) -> FileMeta:
     Raises:
         IllegalSlotError: If slot is not in ALLOWED_SLOTS.
     """
-    print("replacing uuid: ", uuid, " and putting: ", new_file)
+    print("replacing slot: ", slot, " and putting: ", new_file)
     if slot not in ALLOWED_SLOTS:
         raise IllegalSlotError(f"slot {slot} given is illegal value, not in {ALLOWED_SLOTS}")
     file_in_slot = await get_file_meta_in_slot(slot)
