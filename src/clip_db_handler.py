@@ -8,6 +8,8 @@ from pymongo import AsyncMongoClient
 import asyncio
 import mimetypes
 import constants
+import logging
+from pymongo.errors import DuplicateKeyError, PyMongoError
 
 print("RUNNING FROM THIS EXACT FILE:")
 print(os.path.abspath(__file__))
@@ -50,16 +52,27 @@ class TextSave(BaseModel):
 
 class IllegalSlotError(Exception):
     """Raised when an invalid slot number is provided."""
+    def __init__(self, message: str, *, slot: int | None = None) -> None:
+        super().__init__(message)
+        self.slot = slot
 
-    pass
+class TakenSlotError(Exception):
+    """Raised when an invalid slot number is provided."""
+    def __init__(self, message: str, *, slot: int | None = None) -> None:
+        super().__init__(message)
+        self.slot = slot
 
+
+logging.basicConfig(level=logging.DEBUG, filemode="w", filename="log.log",
+                    format="%(asctime)s - %(levelname)s - %(message)s")
+log = logging.getLogger(__name__)
 FILES_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "files")
 print("files path: ", FILES_PATH)
 ALLOWED_SLOTS = constants.ALLOWED_SLOTS
 PRE_EXISTING_FILES_SLOT = constants.PRE_EXISTING_FILES_SLOT
 ALLOWED_TEXT_POSITIONS = constants.ALLOWED_TEXT_POSITIONS
+CONNECTION_STRING = constants.CONNECTION_STRING
 
-CONNECTION_STRING = "mongodb://localhost:27017/"
 client = AsyncMongoClient(CONNECTION_STRING)
 db = client["clipboard_db"]
 files_collection = db["files_meta"]
@@ -363,11 +376,19 @@ async def get_pre_existing_files_meta() -> List[PublicFileMeta]:
         List[PublicFileMeta]: Metadata of all files with slot -1.
     """
     print(f"getting pre-existing files meta")
-    cursor = files_collection.find({"file_slot": PRE_EXISTING_FILES_SLOT}, {"_id": 0})
-    files_dict = await cursor.to_list()
+    try:
+        cursor = files_collection.find({"file_slot": PRE_EXISTING_FILES_SLOT}, {"_id": 0})
+        files_dict = await cursor.to_list()
+    except PyMongoError as e:
+        raise
+    except Exception as e:
+        raise
     files_filemeta = []
     for file_dict in files_dict:
-        files_filemeta.append(PublicFileMeta(**FileMeta(**file_dict).model_dump()))
+        try:
+            files_filemeta.append(PublicFileMeta(**FileMeta(**file_dict).model_dump()))
+        except Exception as e:
+            raise
     for file_meta in files_filemeta:
         print(f"    {file_meta}")
     return files_filemeta
@@ -392,6 +413,7 @@ async def add_file(uploaded_file: UploadFile, slot: int) -> FileMeta:
     file_in_slot = await get_file_meta_in_slot(slot)        
     if isinstance(file_in_slot, FileMeta):
         print(f"    file in slot {slot}: {file_in_slot.file_name}")
+        
         raise IllegalSlotError(f"slot {slot} is taken by {file_in_slot.file_name}")
     else:
         print(f"    no file in slot")
@@ -408,6 +430,7 @@ async def add_file(uploaded_file: UploadFile, slot: int) -> FileMeta:
                                  file_slot=slot,
                                  file_path=new_file_path,
                                  file_uuid=new_file_uuid)
+    
     print(f"    new file metadata: ", str(new_file_metadata))
     # writing into local file:
     try:
@@ -419,7 +442,7 @@ async def add_file(uploaded_file: UploadFile, slot: int) -> FileMeta:
         inserted_file = await files_collection.insert_one(new_file_metadata.model_dump())
         return new_file_metadata
     except Exception as e:
-        print("error: ", e)
+        raise
 
 
 async def replace_file(slot: int, new_file: UploadFile) -> FileMeta:
@@ -470,3 +493,36 @@ async def remove_file(uuid: str) -> FileMeta:
         return to_remove
     else:
         return None
+
+
+# --------------------------------------------------------------------
+# EXCEPTION HANDLING + LOGGING — REFERENCE EXAMPLE (service layer)
+# Not wired in. Shows: domain exception with custom attribute, narrow
+# except + log.warning + chained re-raise, broad except + log.exception
+# + bare re-raise. Pair with the route example in clip_api.py.
+# --------------------------------------------------------------------
+# log = logging.getLogger(__name__)
+#
+# class FileStoreError(Exception):
+#     """Raised when the file store can't complete an operation."""
+#     def __init__(self, message: str, *, slot: int | None = None):
+#         super().__init__(message)
+#         self.slot = slot   # custom attribute travels with the exception
+#
+# async def add_file_example(slot: int, upload: UploadFile) -> FileMeta:
+#     if slot not in ALLOWED_SLOTS:
+#         raise IllegalSlotError(f"slot {slot} not in {ALLOWED_SLOTS}")
+#
+#     meta = FileMeta(file_name=upload.filename, file_slot=slot, ...)
+#     try:
+#         await files_collection.insert_one(meta.model_dump())
+#     except DuplicateKeyError as e:
+#         log.warning("uuid collision in slot %d: %s", slot, meta.file_uuid)
+#         raise FileStoreError("duplicate file uuid", slot=slot) from e
+#     except PyMongoError:
+#         log.exception("mongo failed inserting meta for slot %d", slot)
+#         raise   # propagate as-is, route will translate
+#     return meta
+# --------------------------------------------------------------------
+# END EXAMPLE
+# --------------------------------------------------------------------

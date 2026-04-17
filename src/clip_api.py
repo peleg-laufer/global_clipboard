@@ -6,16 +6,21 @@ import clip_db_handler
 from clip_db_handler import FileMeta, PublicFileMeta
 from fastapi.responses import FileResponse
 from fastapi import Response
+import logging
 import constants
 
 ALLOWED_SLOTS = constants.ALLOWED_SLOTS
 PRE_EXISTING_FILES_SLOT = constants.PRE_EXISTING_FILES_SLOT
+logging.basicConfig(level=logging.DEBUG, filemode="w", filename="log.log",
+                    format="%(asctime)s - %(levelname)s - %(message)s")
+log = logging.getLogger(__name__)
 api = FastAPI()
 
 @api.on_event("startup")
 async def initialize_system():
     """Triggers database setup automatically when FastAPI starts."""
     await clip_db_handler.setup_db()
+    log.info("system initialized successfully")
 
 @api.get("/files/pre-existing")
 async def get_pre_existing_files_meta() -> List[PublicFileMeta]:
@@ -239,3 +244,33 @@ async def undo_text():
             return Response(status_code=204)
         return {"text": current}
     return {"text": result}
+
+
+# --------------------------------------------------------------------
+# EXCEPTION HANDLING + LOGGING — REFERENCE EXAMPLE (route layer)
+# Not wired in. Shows: catch domain exceptions from the service layer
+# and translate each to the right HTTP status. Broad PyMongoError gets
+# logged with full traceback (log.exception) before becoming a 503.
+# Pair with the service example at the bottom of clip_db_handler.py.
+# --------------------------------------------------------------------
+# import logging
+# from pymongo.errors import PyMongoError
+# from clip_db_handler import IllegalSlotError, FileStoreError
+#
+# log = logging.getLogger(__name__)
+#
+# @api.post("/files/{slot}/example")
+# async def upload_file_example(slot: int, file: UploadFile):
+#     try:
+#         meta = await clip_db_handler.add_file_example(slot, file)
+#     except IllegalSlotError as e:
+#         raise HTTPException(status_code=400, detail=str(e))
+#     except FileStoreError as e:
+#         raise HTTPException(status_code=409, detail=f"slot {e.slot}: {e}")
+#     except PyMongoError:
+#         log.exception("db error on upload to slot %d", slot)
+#         raise HTTPException(status_code=503, detail="storage unavailable")
+#     return meta
+# --------------------------------------------------------------------
+# END EXAMPLE
+# --------------------------------------------------------------------
