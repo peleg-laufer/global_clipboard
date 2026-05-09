@@ -106,20 +106,6 @@ async def get_all_files_meta(with_pre_existing: bool = False) -> List[PublicFile
     """
     return await clip_db_handler.get_all_files_meta(with_pre_existing)
 
-async def add_file_to_taken_slot(uploaded_file: UploadFile, file_in_slot: FileMeta) -> PublicFileMeta:
-    """Replaces the file currently in a slot with the uploaded file.
-
-    Args:
-        uploaded_file (UploadFile): The new file to upload.
-        file_in_slot (FileMeta): Metadata of the existing file occupying the slot.
-
-    Returns:
-        PublicFileMeta: Metadata of the newly uploaded file.
-    """
-    # TODO: ask user if wants to replace
-    return await replace_file(slot=file_in_slot.file_slot,
-                        new_file=uploaded_file)
-
 
 @api.post("/files")
 async def upload_file(uploaded_file: UploadFile, slot: int) -> PublicFileMeta:
