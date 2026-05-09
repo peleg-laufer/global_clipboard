@@ -35,7 +35,10 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
-  http: ^1.2.0
+  # [CHANGED] Replaced `http` with `dio`.
+  # dio is a more capable HTTP client — handles multipart file uploads,
+  # file downloads, and timeouts with less boilerplate than the `http` package.
+  dio: ^5.0.0
   desktop_drop: ^0.4.4
   cross_file: ^0.3.4
   path_provider: ^2.1.0
