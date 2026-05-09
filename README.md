@@ -1,6 +1,6 @@
 # global_clipboard
 
-> Sync text and files across your devices — no cloud service required.
+> Sync text and files across your devices - fast and easy.
 
 [![Python](https://img.shields.io/badge/Python-3.14-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.11x-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -22,12 +22,13 @@ This project was built as a structured learning exercise in Python async web ser
 
 ## Features
 
+- **Self-healing startup** — server reconciles disk state with the database on boot, survives manual edits to the files directory
 - **Text sync** — save and retrieve your clipboard text from any device
 - **Undo history** — up to five text saves; step back through history with one tap
 - **Three file slots** — assign files to named slots; replace or delete them from any device
 - **Drag-and-drop uploads** — drop a file onto a slot card in the desktop client
 - **Cross-platform Flutter client** — one codebase, runs on Windows, macOS, iOS, and Android
-- **Self-healing startup** — server reconciles disk state with the database on boot, survives manual edits to the files directory
+
 
 ---
 
@@ -148,7 +149,7 @@ File metadata response shape:
 
 ## Development Notes
 
-The backend (`clip_api.py`, `clip_db_handler.py`, `constants.py`) was written by hand as the primary learning objective — working through async FastAPI patterns, MongoDB driver behavior, and REST API design decisions without code generation. The goal was to understand why things work, not just that they work.
+The backend (`clip_api.py`, `clip_db_handler.py`, `constants.py`) was written by hand as the primary learning objective - working through async FastAPI patterns, MongoDB driver behavior, and REST API design decisions without code generation. The goal was to understand why things work, not just that they work.
 
 The Flutter client was developed with [Claude Code](https://claude.ai/code) acting as a pair-programmer and tutor. Most of the Dart and Flutter-specific code in `main.dart` came from that collaboration, with explanations woven into the comments. This mirrors how I'd expect to use AI tooling on a team: writing and owning the core logic, using AI to accelerate in unfamiliar territory and to review decisions.
 
@@ -167,4 +168,4 @@ The Flutter client was developed with [Claude Code](https://claude.ai/code) acti
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT - see [LICENSE](LICENSE) for details.
