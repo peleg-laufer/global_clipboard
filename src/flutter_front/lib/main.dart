@@ -66,12 +66,33 @@
 //
 // =============================================================================
 
+import 'dart:typed_data'; // Uint8List — needed for raw byte buffers (download response, file picker)
 import 'package:flutter/material.dart';
 
 // [ADDED] Import dio — the HTTP client library we use to talk to the FastAPI backend.
 // Think of it like Python's `requests` library: you create a client, give it a
 // base URL and timeouts, and then call .get() / .post() / etc.
 import 'package:dio/dio.dart';
+
+// [ADDED] desktop_drop — provides the DropTarget widget, which listens for files
+// dragged from the OS file manager and dropped onto a UI region.
+import 'package:desktop_drop/desktop_drop.dart';
+
+// [ADDED] cross_file — XFile is a cross-platform file abstraction. desktop_drop
+// gives us dropped files as XFile objects; we use xFile.readAsBytes() to get
+// the raw bytes, which works on both web (Chrome) and native (no real file path
+// is available in a browser sandbox).
+import 'package:cross_file/cross_file.dart';
+
+// [ADDED] file_saver — cross-platform "save bytes to disk".
+// On web it creates a blob URL and clicks a hidden <a download> element (browser Save-As).
+// On native it writes the bytes to the Downloads folder.
+// One API, no platform-branching code needed in this file.
+import 'package:file_saver/file_saver.dart';
+
+// [ADDED] file_picker — cross-platform file-picker dialog (web + Windows + iPad + Android).
+// Returns picked file as a PlatformFile with .bytes (when withData:true) and .name.
+import 'package:file_picker/file_picker.dart';
 
 
 // =============================================================================
@@ -485,14 +506,171 @@ class _SlotCardState extends State<_SlotCard> {
 
 
   // ---------------------------------------------------------------------------
-  // [ADDED] DOWNLOAD HANDLER — stub, wired in Step 6.
+  // [ADDED] DROP HANDLER — entry point for all drag-and-drop interactions.
   // ---------------------------------------------------------------------------
+  // Called by DropTarget's onDragDone when the user drops a file onto the card.
+  // Decides whether this is a fresh upload (slot empty) or a replace (slot taken),
+  // and shows a confirmation dialog before overwriting an existing file.
   //
-  // Keeping this as a named method (rather than an inline lambda in onPressed)
-  // means we can call it from other places later (e.g. a long-press gesture).
-  void _onDownloadPressed() {
-    // Step 6: call GET /files/{slot}/download, save the file to disk via
-    // path_provider + dio's download() API.
+  // `async` because both the dialog and the network calls are asynchronous.
+  // `mounted` is a built-in State property — it's false if the widget was removed
+  // from the tree while we were awaiting something. Always check it before calling
+  // setState or using context after an await, or Flutter will throw an error.
+  Future<void> _onFileDrop(XFile xFile) async {
+    if (_fileMeta == null) {
+      // Slot is empty — upload straight away.
+      await _uploadFile(xFile);
+    } else {
+      // Slot is occupied — ask the user before overwriting.
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Replace file?'),
+          content: Text(
+            'Slot ${widget.slot} already has "${_fileMeta!.fileName}".\nReplace it?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Replace'),
+            ),
+          ],
+        ),
+      );
+      // `confirmed` is null if the user dismissed the dialog by tapping outside —
+      // treat that the same as Cancel.
+      if (confirmed == true && mounted) await _replaceFile(xFile);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // [ADDED] POST /files?slot={slot} — upload a file to an empty slot.
+  // ---------------------------------------------------------------------------
+  // `slot` is a query parameter on this endpoint (not a path segment), so we
+  // pass it via `queryParameters` rather than embedding it in the URL string.
+  //
+  // The file is sent as multipart/form-data. The field name `uploaded_file` must
+  // match the FastAPI parameter name exactly, or the server returns a 422.
+  //
+  // We read the file as bytes (`readAsBytes`) instead of using a file path because
+  // on web (Chrome) there is no real file-system path — the browser gives us only
+  // an in-memory buffer.
+  Future<void> _uploadFile(XFile xFile) async {
+    setState(() { _isLoading = true; _errorMessage = null; });
+    try {
+      final bytes = await xFile.readAsBytes();
+      final formData = FormData.fromMap({
+        'uploaded_file': MultipartFile.fromBytes(bytes, filename: xFile.name),
+      });
+      final response = await _dio.post(
+        '/files',
+        queryParameters: {'slot': widget.slot},
+        data: formData,
+      );
+      if (mounted) {
+        setState(() {
+          _fileMeta  = FileMeta.fromJson(response.data as Map<String, dynamic>);
+          _isLoading = false;
+        });
+      }
+    } on DioException catch (e) {
+      if (mounted) setState(() { _errorMessage = e.message ?? 'Upload failed'; _isLoading = false; });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // [ADDED] PUT /files/{slot}/replace — swap the file in an occupied slot.
+  // ---------------------------------------------------------------------------
+  // Same multipart/form-data shape as upload, but the field name is `new_file`
+  // to match the FastAPI PUT endpoint's parameter name.
+  Future<void> _replaceFile(XFile xFile) async {
+    setState(() { _isLoading = true; _errorMessage = null; });
+    try {
+      final bytes = await xFile.readAsBytes();
+      final formData = FormData.fromMap({
+        'new_file': MultipartFile.fromBytes(bytes, filename: xFile.name),
+      });
+      final response = await _dio.put(
+        '/files/${widget.slot}/replace',
+        data: formData,
+      );
+      if (mounted) {
+        setState(() {
+          _fileMeta  = FileMeta.fromJson(response.data as Map<String, dynamic>);
+          _isLoading = false;
+        });
+      }
+    } on DioException catch (e) {
+      if (mounted) setState(() { _errorMessage = e.message ?? 'Replace failed'; _isLoading = false; });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // [ADDED] DELETE /files/{slot} — remove the file and empty the slot.
+  // ---------------------------------------------------------------------------
+  Future<void> _deleteFile() async {
+    setState(() { _isLoading = true; _errorMessage = null; });
+    try {
+      await _dio.delete('/files/${widget.slot}');
+      if (mounted) setState(() { _fileMeta = null; _isLoading = false; });
+    } on DioException catch (e) {
+      if (mounted) setState(() { _errorMessage = e.message ?? 'Delete failed'; _isLoading = false; });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // [ADDED] GET /files/{slot}/download — fetch bytes and save to disk.
+  // ---------------------------------------------------------------------------
+  // `responseType: ResponseType.bytes` tells Dio to give us the raw response
+  // body as a Uint8List instead of trying to parse it as JSON. Required for
+  // binary file content.
+  //
+  // FileSaver.instance.saveFile abstracts the platform difference:
+  //   • Web  → creates a Blob URL, clicks a hidden <a download> element →
+  //            browser shows its native "Save As" dialog.
+  //   • Native → writes the bytes to the system Downloads folder.
+  Future<void> _onDownloadPressed() async {
+    setState(() { _isLoading = true; _errorMessage = null; });
+    try {
+      final response = await _dio.get(
+        '/files/${widget.slot}/download',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      await FileSaver.instance.saveFile(
+        name: _fileMeta!.fileName,
+        bytes: response.data as Uint8List,
+      );
+    } on DioException catch (e) {
+      if (mounted) setState(() => _errorMessage = e.message ?? 'Download failed');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // [ADDED] BROWSE HANDLER — open an OS file-picker dialog.
+  // ---------------------------------------------------------------------------
+  // `withData: true` forces file_picker to read the bytes eagerly. This is
+  // required on web (no real file path exists in the browser sandbox) and keeps
+  // the code the same on native (slightly less efficient than path-based reading,
+  // but acceptable for this app's file sizes).
+  //
+  // After picking, we build an XFile.fromData and hand it to _onFileDrop — so
+  // the upload-vs-replace logic and the confirmation dialog are reused for free.
+  Future<void> _onBrowsePressed() async {
+    final result = await FilePicker.platform.pickFiles(withData: true);
+    if (result == null || result.files.isEmpty) return; // user cancelled
+    final pf = result.files.first;
+    final xFile = XFile.fromData(
+      pf.bytes!,
+      name: pf.name,
+      mimeType: pf.extension != null ? 'application/${pf.extension}' : null,
+    );
+    await _onFileDrop(xFile);
   }
 
 
@@ -508,28 +686,55 @@ class _SlotCardState extends State<_SlotCard> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // `widget.slot` instead of the old `slot` — because slot now lives
-            // on the widget object, not directly on the State.
             Text('Slot ${widget.slot}',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
 
-            // [CHANGED] Content area is now dynamic — see _buildContent() below.
-            SizedBox(
-              height: 80,
-              child: Center(child: _buildContent()),
+            // [CHANGED] Wrapped in DropTarget so the 80px area accepts dragged files.
+            // DropTarget is from package:desktop_drop. It wraps any widget and fires
+            // onDragDone when the user releases a file over it. We forward the first
+            // dropped file to _onFileDrop, which decides upload vs replace.
+            DropTarget(
+              onDragDone: (detail) => _onFileDrop(detail.files.first),
+              child: SizedBox(
+                height: 80,
+                child: Center(child: _buildContent()),
+              ),
             ),
             const SizedBox(height: 8),
 
-            // [CHANGED] Download button is enabled only when a file is present.
-            // `onPressed: null` makes Flutter render the button as disabled
-            // (greyed-out, non-clickable). We pass a real callback only when
-            // _fileMeta is non-null.
+            // [ADDED] Browse button — opens the OS file picker as an alternative
+            // to drag-and-drop. Shares the same upload/replace/dialog logic.
+            OutlinedButton.icon(
+              onPressed: _onBrowsePressed,
+              icon: const Icon(Icons.folder_open),
+              label: const Text('Browse'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.blue,
+              ),
+            ),
+            const SizedBox(height: 4),
+
             OutlinedButton.icon(
               onPressed: _fileMeta != null ? _onDownloadPressed : null,
               icon: const Icon(Icons.download),
               label: const Text('Download'),
             ),
+
+            // [ADDED] Delete button — only rendered when the slot has a file.
+            // `if` inside a list literal conditionally includes the widget.
+            if (_fileMeta != null) ...[
+              const SizedBox(height: 4),
+              OutlinedButton.icon(
+                onPressed: _deleteFile,
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Delete'),
+                // Tint the button red to signal a destructive action.
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ],
           ],
         ),
       ),

@@ -43,6 +43,8 @@ dependencies:
   cross_file: ^0.3.4
   path_provider: ^2.1.0
   http_parser: ^4.0.2
+  file_saver: ^0.2.14
+  file_picker: ^8.1.6
 
 dev_dependencies:
   flutter_test:
