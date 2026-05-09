@@ -59,12 +59,24 @@ async def get_file_meta(slot: int) -> PublicFileMeta:
     Raises:
         HTTPException: 400 if slot is not in ALLOWED_SLOTS.
     """
+    # DEBUG: trace every incoming request. Useful in dev to confirm the route
+    # receives the right value. Too noisy for INFO in production.
+    log.debug("GET /files/%d — fetching slot metadata", slot)
+
     if slot not in ALLOWED_SLOTS:
+        # WARNING: bad client input — expected in normal operation, not a bug.
+        # Use WARNING (not ERROR) for 4xx: the server did nothing wrong.
+        log.warning("invalid slot requested: %d (allowed: %s)", slot, ALLOWED_SLOTS)
         raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
+
     to_ret = await clip_db_handler.get_file_meta_in_slot(slot)
     if to_ret:
+        # DEBUG: normal success path — too noisy for INFO in production.
+        log.debug("slot %d — returning metadata for '%s'", slot, to_ret.file_name)
         return to_ret
     else:
+        # DEBUG: empty slot is a valid state, not an error.
+        log.debug("slot %d is empty — returning 204", slot)
         return Response(status_code=204)
     
 @api.get("/files/{slot}/download")
@@ -81,16 +93,20 @@ async def get_file_data(slot: int) -> FileResponse:
         HTTPException: 400 if slot is not in ALLOWED_SLOTS.
         HTTPException: 404 if no file exists in the slot.
     """
+    log.debug("GET /files/%d/download - fetching slot file data", slot)
     if slot not in ALLOWED_SLOTS:
+        log.warning("invalid slot requested: %d (allowed: %s)", slot, ALLOWED_SLOTS)
         raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
     file_meta = await clip_db_handler.get_file_meta_in_slot(slot)
     if file_meta:
+        log.debug("slot %d returning filedata for %s", slot, file_meta.file_name)
         file_response = FileResponse(path=file_meta.file_path,
                                     filename=file_meta.file_name,
                                     media_type=file_meta.file_type)
         return file_response
     else:
         # file_meta is None == file not found
+        log.warning("file in slot %d not found — returning 404", slot)
         raise HTTPException(status_code=404, detail="file not found")
         
                 
