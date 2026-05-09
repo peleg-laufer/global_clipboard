@@ -60,10 +60,10 @@ global_clipboard/
 ├── src/
 │   ├── clip_api.py             # FastAPI route handlers — thin, delegate to handler
 │   ├── clip_db_handler.py      # All business logic: DB queries, file I/O, validation
-│   ├── constants.py            # Single source of truth for slot count, text limits, DB URI
-│   └── flutter_front/
-│       └── lib/
-│           └── main.dart       # Complete Flutter client (~800 lines, single-file MVP)
+│   └── constants.py            # Single source of truth for slot count, text limits, DB URI
+├── app/
+│   └── lib/
+│       └── main.dart           # Complete Flutter client (~800 lines, single-file MVP)
 ├── files/                      # Uploaded files, stored with UUID filenames (git-ignored)
 └── log.log                     # Server logs
 ```
@@ -102,7 +102,7 @@ Interactive API docs are available at `http://localhost:8000/docs`.
 ### Run the Flutter client
 
 ```bash
-cd src/flutter_front
+cd app
 flutter pub get
 flutter run
 ```
