@@ -12,7 +12,7 @@
 
 ## About
 
-global_clipboard is a self-hosted clipboard sync tool. It keeps a shared text buffer and three file slots in sync across all your devices — paste on your laptop, pick it up on your tablet, no third-party account needed.
+global_clipboard is a self-hosted clipboard sync tool. It keeps a shared text buffer and three file slots in sync across all your devices - paste on your laptop, pick it up on your tablet, no third-party account needed.
 
 The server is designed to run on a Raspberry Pi on your local network. A cross-platform Flutter client (Windows, macOS, iOS, Android) connects to it over HTTP. Currently single-user; the architecture is intentionally simple to match that scope.
 
@@ -39,7 +39,7 @@ This project was built as a structured learning exercise in Python async web ser
 |---|---|---|
 | Framework | FastAPI | async-native, automatic OpenAPI docs, Pydantic integration |
 | Validation | Pydantic v2 | data models defined once, reused for DB reads and API responses |
-| Database | MongoDB (async via `pymongo`) | flexible schema suited to evolving file metadata |
+| Database | MongoDB (async via `pymongo`) | was familiar with SQL, wanted to try something new |
 | Language | Python 3.14 | learning target; type hints enforced project-wide |
 
 ### Frontend
