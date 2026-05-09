@@ -465,10 +465,11 @@ async def replace_file(slot: int, new_file: UploadFile) -> FileMeta:
     removed = await remove_file(file_in_slot.file_uuid)
     print(f"    removed: ", removed)
     if removed:
+        
         added_file = await add_file(uploaded_file=new_file, slot=int(removed['file_slot']))
         print(f"    added: ", added_file)
         return added_file
-    else:
+    else:            
         return None
     
         

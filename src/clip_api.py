@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, File, UploadFile, Request
+from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from enum import IntEnum
 from pydantic import BaseModel,Field
@@ -15,6 +16,19 @@ logging.basicConfig(level=logging.DEBUG, filemode="w", filename="log.log",
                     format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
 api = FastAPI()
+
+# [ADDED] CORS middleware — required for browser-based clients (Flutter web,
+# curl from a browser extension, etc.). Without this the browser blocks every
+# cross-origin request before it even reaches our route handlers.
+#
+# allow_origins=["*"] is fine for local dev; tighten this to the Flutter web
+# app's specific origin before deploying to the Pi.
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @api.on_event("startup")
 async def initialize_system():
@@ -109,7 +123,7 @@ async def add_file_to_taken_slot(uploaded_file: UploadFile, file_in_slot: FileMe
 
 @api.post("/files")
 async def upload_file(uploaded_file: UploadFile, slot: int) -> PublicFileMeta:
-    """Uploads a file to the specified slot. Replaces existing file if slot is taken.
+    """Uploads a file to the specified slot.
 
     Args:
         uploaded_file (UploadFile): The file to upload.
@@ -120,6 +134,7 @@ async def upload_file(uploaded_file: UploadFile, slot: int) -> PublicFileMeta:
 
     Raises:
         HTTPException: 400 if slot is not in ALLOWED_SLOTS.
+        HTTPException: 409 if slot is taken.
         HTTPException: 500 if the upload fails.
     """
     print("got file: " + str(uploaded_file))
@@ -127,10 +142,9 @@ async def upload_file(uploaded_file: UploadFile, slot: int) -> PublicFileMeta:
     if slot not in ALLOWED_SLOTS:
         raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
     file_in_slot = await clip_db_handler.get_file_meta_in_slot(slot)
-    print(f"file in slot to replace: {file_in_slot}")
+    print(f"file currently in slot: {file_in_slot}")
     if file_in_slot:
-        return await add_file_to_taken_slot(uploaded_file=uploaded_file,
-                                      file_in_slot=file_in_slot)
+        raise HTTPException(status_code=409, detail="slot is taken")
     else:
         uploaded_file_meta = await clip_db_handler.add_file(uploaded_file, slot)
         if uploaded_file_meta:
