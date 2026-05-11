@@ -9,10 +9,8 @@ import asyncio
 import mimetypes
 import constants
 import logging
-from pymongo.errors import DuplicateKeyError, PyMongoError
+from pymongo.errors import DuplicateKeyError
 
-print("RUNNING FROM THIS EXACT FILE:")
-print(os.path.abspath(__file__))
 
 class PublicFileMeta(BaseModel):
     """File metadata safe to expose to clients.
@@ -63,11 +61,13 @@ class TakenSlotError(Exception):
         self.slot = slot
 
 
-logging.basicConfig(level=logging.DEBUG, filemode="w", filename="log.log",
+logging.basicConfig(level=logging.INFO, filemode="w", filename=constants.DB_LOG_FILE_PATH,
                     format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
 FILES_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "files")
-print("files path: ", FILES_PATH)
+
+log.info("booting up server in %s", os.path.abspath(__file__))
+log.info("files path for server: %s", FILES_PATH)
 ALLOWED_SLOTS = constants.ALLOWED_SLOTS
 PRE_EXISTING_FILES_SLOT = constants.PRE_EXISTING_FILES_SLOT
 ALLOWED_TEXT_POSITIONS = constants.ALLOWED_TEXT_POSITIONS
@@ -79,19 +79,20 @@ files_collection = db["files_meta"]
 textbox_collection = db["textbox"]
 
 
+
 async def setup_db():
     """Initializes the database and file system on server startup.
 
     Creates the files directory if missing, verifies the MongoDB connection,
     and delegates to collection-specific setup and validation functions.
     """
-    print(f"setting up db")
+    log.debug("setting up mongodb")
     # create file dir
     if not os.path.exists(FILES_PATH):
         os.makedirs(FILES_PATH)
     # check db connection:
     await client.admin.command("ping")
-    print(f"    MongoDB connected")
+    log.info("connected mongodb client in %s", CONNECTION_STRING)
     # check and fix db:
     await files_collection_setup_and_validation()
     await textbox_collection_setup_and_validation()
@@ -118,6 +119,7 @@ async def fix_positions():
         positions {2: "first", 3: "second", 3: "duplicate"}
         become    {0: "first", 1: "second"}
     """
+    log.debug("fixing positions of textbox texts")
     all_saves = await textbox_collection.find({}, {"_id": 0}).sort("position", 1).to_list()
     # deduplicate: keep first occurrence of each position
     seen_positions = set()
@@ -140,6 +142,7 @@ async def add_save_to_textbox(text: str):
     Args:
         text (str): The current textbox content to save.
     """
+    log.debug("adding a textbox save. text: %s", text)
     existing = await textbox_collection.find({}, {"_id": 0}).sort("position", 1).to_list()
     new_saves = [{"text": text, "position": 0}] + existing  # prepend new save
     new_saves = new_saves[:5]  # cap at 5, dropping the oldest
@@ -154,9 +157,12 @@ async def get_last_save() -> str:
     Returns:
         str | None: The text at position 0, or None if no saves exist.
     """
+    log.debug("getting last textbox save")
     doc = await textbox_collection.find_one({"position": 0}, {"_id": 0})
     if doc:
+        log.debug("last save returned: %s", doc["text"])
         return doc["text"]
+    log.debug("no text foun to return")
     return None
 
 async def textbox_ctrl_z() -> str:
@@ -168,6 +174,7 @@ async def textbox_ctrl_z() -> str:
     Returns:
         str | None: The new most recent text after undo, or None if history is now empty.
     """
+    log.debug("undo textbox, deleting last save")
     await textbox_collection.delete_one({"position": 0})
     await fix_positions()
     return await get_last_save()
@@ -200,7 +207,7 @@ async def files_collection_setup_and_validation():
     """
     # making uuid unique index
     await files_collection.create_index("file_uuid", unique=True)
-    print(f"    Index created")
+    log.debug("indexed db")
 
     # verify db and files in folder match, ignoring sub-folders
     files_in_folder = []
@@ -208,27 +215,23 @@ async def files_collection_setup_and_validation():
         poss_file_path = os.path.join(FILES_PATH, poss_file)
         if os.path.isfile(poss_file_path): # ignoring folders
             files_in_folder.append(poss_file)
-    print(f"    files on folder:")
+    file_str = "files in folder: "
     for filename in files_in_folder:
-        print(f"        {filename}")
+        file_str += filename + ", "
+    log.info("%s", file_str)
     files_on_db = await get_all_files_meta(True)
-    print(f"    files on db: ")
+    db_files_str = "files on db: "
     for file_meta in files_on_db:
-        print(f"        ", file_meta.file_name)
-    
+        db_files_str += file_meta.file_name + ", "
+    log.info("%s", db_files_str)    
     # adding missing files in db:
-    print("     adding missing files to db")
     for file_name in files_in_folder:
-        print("         checking ", file_name)
         file_path = os.path.join(FILES_PATH, file_name)
-        print("             path: ", file_path)
         matching_files_in_db = await files_collection.find({"file_path": file_path}).to_list(None)
-        print("             db documents matching path: ")
-        print("             ", matching_files_in_db)
         if len(matching_files_in_db) == 0:  # not on db
             # adding to db
             # finding mime type of file
-            print("             no db documents matching file")
+            log.debug("file: %s not on db. adding", file_name)
             file_mime_type = mimetypes.guess_type(file_name)[0]
             new_file_uuid = str(uuid.uuid4())
             # renaming file to uuid
@@ -243,27 +246,28 @@ async def files_collection_setup_and_validation():
                                          file_path=new_file_path,
                                          file_uuid=new_file_uuid)
             inserted_meta = await files_collection.insert_one(missing_file_meta.model_dump())
-            print("             added ", inserted_meta, " to db")
         elif len(matching_files_in_db) >= 2:
             # delete duplicates
+            log.debug("file: %s has duplicate metas on db", file_name)
             for matching_file in matching_files_in_db[1:]:
                 await files_collection.delete_one({"file_path": file_path})
     
-    print(f"    deleting wrong metas in db")
     # deleting wrong metas:
     slots = {0: 0,
              1: 0,
              2: 0}
     for file_meta in files_on_db:
         if not os.path.exists(file_meta.file_path):
-            print(f"        deleting ", file_meta.file_name, " from db")
+            log.debug("deleting filemeta of %s from db", file_meta.file_name)
             await remove_file(file_meta.file_uuid)
         elif (file_meta.file_slot not in ALLOWED_SLOTS) and file_meta.file_slot != PRE_EXISTING_FILES_SLOT:  # illegal slot
+            
             query_filter = {'file_uuid' : file_meta.file_uuid}
             update_operation = { '$set' : 
                 {'file_slot': PRE_EXISTING_FILES_SLOT}
             }
             result = await files_collection.update_one(query_filter, update_operation)
+            log.debug("file %s not in a legal slot, movied to pre_existing: %d", file_meta.file_name, PRE_EXISTING_FILES_SLOT)
         else:
             if file_meta.file_slot == PRE_EXISTING_FILES_SLOT:
                 continue
@@ -286,13 +290,13 @@ async def get_file_meta(uuid: str) -> PublicFileMeta:
     Returns:
         PublicFileMeta | None: Metadata of the file, or None if not found.
     """
-    print(f"finding meta of uuid: {uuid}")
+    log.debug("getting metadata of uuid: %s", uuid)
     doc = await files_collection.find_one({"file_uuid": uuid}, {"_id": 0})
     if doc:
-        print(f"    found file: {FileMeta(**doc).file_name}")
+        log.debug("found file: %s", FileMeta(**doc).file_name)
         return PublicFileMeta(**FileMeta(**doc).model_dump())
     else:
-        print(f"    no document matching uuid")
+        log.debug("no document found with uuid: %s", uuid)
         return None
 
 async def get_file_meta_in_slot(slot: int) -> FileMeta:
@@ -307,15 +311,16 @@ async def get_file_meta_in_slot(slot: int) -> FileMeta:
     Raises:
         IllegalSlotError: If slot is not in ALLOWED_SLOTS.
     """
-    print(f"finding FileMeta in slot: {slot}")
+    log.debug(f"finding FileMeta in slot: {slot}")
     if slot not in ALLOWED_SLOTS:
+        log.error("slot given %d not in allowed slots: %s", slot, ALLOWED_SLOTS)
         raise IllegalSlotError(f"slot {slot} given is illegal value, not in allowed slots: {ALLOWED_SLOTS}")
     doc = await files_collection.find_one({"file_slot": slot}, {"_id": 0})
     if doc:
-        print(f"    found file in slot: {FileMeta(**doc).file_name}")
+        log.debug("found file %s in slot %d", FileMeta(**doc).file_name, slot)
         return FileMeta(**doc)
     else:
-        print(f"    no file found")
+        log.debug("slot %d is empty", slot)
         return None
 
 async def get_file_path(uuid: str) -> str:
@@ -327,13 +332,13 @@ async def get_file_path(uuid: str) -> str:
     Returns:
         str | None: Absolute path to the file, or None if not found.
     """
-    print(f"finding path of uuid: {uuid}")
+    log.debug("finding path of %s", uuid)
     file_meta = await get_file_meta(uuid)
     if file_meta:
-        print(f"    found path: {file_meta.file_path}")
+        log.debug("found path: %s for uuid %s", file_meta.file_path, uuid)
         return file_meta.file_path
     else:
-        print(f"    no path found")
+        log.warning("no file matching uuid %s", uuid)
         return None
         
 
@@ -347,26 +352,24 @@ async def get_all_files_meta(with_pre_existing: bool = False) -> List[FileMeta]:
         List[FileMeta]: Metadata of all matching files.
     """
     if with_pre_existing:
-        print(f"getting all files meta including pre existing files")
+        log.debug("getting all files meta including pre existing files")
         cursor = files_collection.find({},
                                     {"_id": 0})
         files_dict = await cursor.to_list()
         files_filemeta = []
         for file_dict in files_dict:
             files_filemeta.append(FileMeta(**file_dict))
-            for file_meta in files_filemeta:
-                print(f"    {file_meta}")
+        log.debug("returning %d files (including pre-existing)", len(files_filemeta))
         return files_filemeta
     else:
-        print(f"getting all files meta without pre existing files")
+        log.debug("getting all files meta without pre existing files")
         cursor = files_collection.find({"file_slot": {"$ne": -1}},
                                     {"_id": 0})
         files_dict = await cursor.to_list()
         files_filemeta = []
         for file_dict in files_dict:
             files_filemeta.append(FileMeta(**file_dict))
-            for file_meta in files_filemeta:
-                print(f"    {file_meta}")
+        log.debug("returning %d files (slots only)", len(files_filemeta))
         return files_filemeta
 
 async def get_pre_existing_files_meta() -> List[PublicFileMeta]:
@@ -375,22 +378,13 @@ async def get_pre_existing_files_meta() -> List[PublicFileMeta]:
     Returns:
         List[PublicFileMeta]: Metadata of all files with slot -1.
     """
-    print(f"getting pre-existing files meta")
-    try:
-        cursor = files_collection.find({"file_slot": PRE_EXISTING_FILES_SLOT}, {"_id": 0})
-        files_dict = await cursor.to_list()
-    except PyMongoError as e:
-        raise
-    except Exception as e:
-        raise
+    log.debug("getting pre-existing files meta")
+    cursor = files_collection.find({"file_slot": PRE_EXISTING_FILES_SLOT}, {"_id": 0})
+    files_dict = await cursor.to_list()
     files_filemeta = []
     for file_dict in files_dict:
-        try:
-            files_filemeta.append(PublicFileMeta(**FileMeta(**file_dict).model_dump()))
-        except Exception as e:
-            raise
-    for file_meta in files_filemeta:
-        print(f"    {file_meta}")
+        files_filemeta.append(PublicFileMeta(**FileMeta(**file_dict).model_dump()))
+    log.debug("returning %d pre-existing files", len(files_filemeta))
     return files_filemeta
 
 async def add_file(uploaded_file: UploadFile, slot: int) -> FileMeta:
@@ -406,17 +400,13 @@ async def add_file(uploaded_file: UploadFile, slot: int) -> FileMeta:
     Raises:
         IllegalSlotError: If slot is not in ALLOWED_SLOTS or the slot is already taken.
     """
-    print(f"adding file to slot: {slot}")
-    print(f"file: {uploaded_file}")
+    log.debug("adding file '%s' to slot %d", uploaded_file.filename, slot)
     if slot not in ALLOWED_SLOTS:
         raise IllegalSlotError(f"slot {slot} given is illegal value, not in {ALLOWED_SLOTS}")
-    file_in_slot = await get_file_meta_in_slot(slot)        
+    file_in_slot = await get_file_meta_in_slot(slot)
     if isinstance(file_in_slot, FileMeta):
-        print(f"    file in slot {slot}: {file_in_slot.file_name}")
-        
+        log.warning("slot %d is taken by '%s'", slot, file_in_slot.file_name)
         raise IllegalSlotError(f"slot {slot} is taken by {file_in_slot.file_name}")
-    else:
-        print(f"    no file in slot")
     # setting up metadata:
     new_file_uuid = str(uuid.uuid4())
     ext = os.path.splitext(uploaded_file.filename)[1]
@@ -430,19 +420,12 @@ async def add_file(uploaded_file: UploadFile, slot: int) -> FileMeta:
                                  file_slot=slot,
                                  file_path=new_file_path,
                                  file_uuid=new_file_uuid)
-    
-    print(f"    new file metadata: ", str(new_file_metadata))
-    # writing into local file:
-    try:
-        print(f"    reading file content")
-        file_content = uploaded_file.file.read()
-        print(f"    writing new file on server in path: {new_file_metadata.file_path}")
-        with open(new_file_path, "wb") as new_file:
-            new_file.write(file_content)
-        inserted_file = await files_collection.insert_one(new_file_metadata.model_dump())
-        return new_file_metadata
-    except Exception as e:
-        raise
+    file_content = await uploaded_file.read()
+    with open(new_file_path, "wb") as new_file:
+        new_file.write(file_content)
+    await files_collection.insert_one(new_file_metadata.model_dump())
+    log.info("stored '%s' in slot %d at %s", new_file_name, slot, new_file_path)
+    return new_file_metadata
 
 
 async def replace_file(slot: int, new_file: UploadFile) -> FileMeta:
@@ -458,18 +441,16 @@ async def replace_file(slot: int, new_file: UploadFile) -> FileMeta:
     Raises:
         IllegalSlotError: If slot is not in ALLOWED_SLOTS.
     """
-    print("replacing slot: ", slot, " and putting: ", new_file)
+    log.debug("replacing slot %d with '%s'", slot, new_file.filename)
     if slot not in ALLOWED_SLOTS:
         raise IllegalSlotError(f"slot {slot} given is illegal value, not in {ALLOWED_SLOTS}")
     file_in_slot = await get_file_meta_in_slot(slot)
     removed = await remove_file(file_in_slot.file_uuid)
-    print(f"    removed: ", removed)
     if removed:
-        
+        log.debug("removed '%s' from slot %d", removed['file_name'], slot)
         added_file = await add_file(uploaded_file=new_file, slot=int(removed['file_slot']))
-        print(f"    added: ", added_file)
         return added_file
-    else:            
+    else:
         return None
     
         
@@ -482,15 +463,15 @@ async def remove_file(uuid: str) -> FileMeta:
     Returns:
         dict | None: The deleted document as a dict, or None if no file matched the UUID.
     """
-    print(f"removing uuid: {uuid}")
+    log.debug("removing file with uuid: %s", uuid)
     to_remove = await files_collection.find_one_and_delete({"file_uuid": uuid}, {"_id": 0})
     if to_remove:
         path_to_remove = to_remove["file_path"]
-        print(f"    trying to remove path: ", path_to_remove)
         if os.path.exists(path_to_remove):
             os.remove(path_to_remove)
+            log.info("deleted file '%s' from disk and DB", to_remove["file_name"])
         else:
-            print(f"    no file matching path saved in db: ", to_remove)
+            log.warning("DB record for '%s' deleted but file not found on disk: %s", to_remove["file_name"], path_to_remove)
         return to_remove
     else:
         return None

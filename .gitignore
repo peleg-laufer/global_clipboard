@@ -4,5 +4,5 @@ doc
 hello world.txt
 CLAUDE.md
 src/try_stuff.py
-log.log
+*.log
 .claude/
