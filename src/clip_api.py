@@ -1,3 +1,5 @@
+from turtle import up
+
 from fastapi import FastAPI, HTTPException, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
@@ -8,33 +10,35 @@ from clip_db_handler import FileMeta, PublicFileMeta
 from fastapi.responses import FileResponse
 from fastapi import Response
 import logging
-import constants
+from contextlib import asynccontextmanager
+from constants import ALLOWED_SLOTS, PRE_EXISTING_FILES_SLOT, API_LOG_FILE_PATH
 
-ALLOWED_SLOTS = constants.ALLOWED_SLOTS
-PRE_EXISTING_FILES_SLOT = constants.PRE_EXISTING_FILES_SLOT
-logging.basicConfig(level=logging.INFO, filemode="w", filename=constants.API_LOG_FILE_PATH,
-                    format="%(asctime)s - %(levelname)s - %(message)s")
-log = logging.getLogger(__name__)
-api = FastAPI()
 
-# [ADDED] CORS middleware — required for browser-based clients (Flutter web,
-# curl from a browser extension, etc.). Without this the browser blocks every
-# cross-origin request before it even reaches our route handlers.
-#
-# allow_origins=["*"] is fine for local dev; tighten this to the Flutter web
-# app's specific origin before deploying to the Pi.
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Triggers database setup automatically when FastAPI starts."""
+    await clip_db_handler.setup_db()
+    # set up logging
+    log.setLevel(logging.DEBUG)
+    handler = logging.FileHandler(API_LOG_FILE_PATH, mode="w")
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    log.addHandler(handler)
+    log.info("system initialized successfully")
+    yield
+    # shutdown code:
+    pass
+
+api = FastAPI(lifespan=lifespan)
+
+
 api.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@api.on_event("startup")
-async def initialize_system():
-    """Triggers database setup automatically when FastAPI starts."""
-    await clip_db_handler.setup_db()
-    log.info("system initialized successfully")
+log = logging.getLogger(__name__)
 
 @api.get("/files/pre-existing")
 async def get_pre_existing_files_meta() -> List[PublicFileMeta]:
@@ -61,21 +65,25 @@ async def get_file_meta(slot: int) -> PublicFileMeta:
     """
     # DEBUG: trace every incoming request. Useful in dev to confirm the route
     # receives the right value. Too noisy for INFO in production.
+    
     log.debug("GET /files/%d — fetching slot metadata", slot)
 
     if slot not in ALLOWED_SLOTS:
         # WARNING: bad client input — expected in normal operation, not a bug.
         # Use WARNING (not ERROR) for 4xx: the server did nothing wrong.
+        
         log.warning("invalid slot requested: %d (allowed: %s)", slot, ALLOWED_SLOTS)
         raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
 
     to_ret = await clip_db_handler.get_file_meta_in_slot(slot)
     if to_ret:
         # DEBUG: normal success path — too noisy for INFO in production.
+        
         log.debug("slot %d — returning metadata for '%s'", slot, to_ret.file_name)
         return to_ret
     else:
         # DEBUG: empty slot is a valid state, not an error.
+        
         log.debug("slot %d is empty — returning 204", slot)
         return Response(status_code=204)
     
@@ -93,6 +101,7 @@ async def get_file_data(slot: int) -> FileResponse:
         HTTPException: 400 if slot is not in ALLOWED_SLOTS.
         HTTPException: 404 if no file exists in the slot.
     """
+    
     log.debug("GET /files/%d/download - fetching slot file data", slot)
     if slot not in ALLOWED_SLOTS:
         log.warning("invalid slot requested: %d (allowed: %s)", slot, ALLOWED_SLOTS)
@@ -120,6 +129,7 @@ async def get_all_files_meta(with_pre_existing: bool = False) -> List[PublicFile
     Returns:
         List[PublicFileMeta]: Metadata of all matching files.
     """
+    
     log.debug("GET /files - fetching all files meta. with pre existing files: %d", with_pre_existing)
     return await clip_db_handler.get_all_files_meta(with_pre_existing)
 
@@ -140,6 +150,7 @@ async def upload_file(uploaded_file: UploadFile, slot: int) -> PublicFileMeta:
         HTTPException: 409 if slot is taken.
         HTTPException: 500 if the upload fails.
     """
+    
     log.debug("POST /files - uploading file: %s \nto slot %d", str(uploaded_file), slot)
     if slot not in ALLOWED_SLOTS:
         log.warning("invalid slot requested: %d (allowed: %s)", slot, ALLOWED_SLOTS)
@@ -159,7 +170,7 @@ async def upload_file(uploaded_file: UploadFile, slot: int) -> PublicFileMeta:
     
 
 @api.put("/files/{slot}/replace")
-async def replace_file(slot: int, new_file: UploadFile) -> PublicFileMeta:
+async def replace_file(new_file: UploadFile, slot: int) -> PublicFileMeta:
     """Replaces the file in the given slot with a new file.
 
     Args:
@@ -173,15 +184,21 @@ async def replace_file(slot: int, new_file: UploadFile) -> PublicFileMeta:
         HTTPException: 400 if slot is not in ALLOWED_SLOTS.
         HTTPException: 404 if no file exists in the slot.
     """
+    
     log.debug("POST /files/%d/replace - replacing file in slot: %d \nwith file: %s", slot, slot, new_file)
     if slot not in ALLOWED_SLOTS:
         log.warning("invalid slot requested for replacement: %d (allowed: %s)", slot, ALLOWED_SLOTS)
         raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
     added_file = await clip_db_handler.replace_file(slot,new_file)
+    file_in_slot = await clip_db_handler.get_file_meta_in_slot(slot)
+    if not file_in_slot:
+        log.warning("no file to replace in slot %d", slot)
+        raise HTTPException(status_code=404, detail="file not found")
     if not added_file:
         log.error("replacement of slot %d with file: %s failed", slot, new_file)
         raise HTTPException(status_code=500, detail="failed to replace file")
     else:
+        
         log.debug("successfully replaced file in slot: %d \nwith file: %s", slot, new_file)
         return added_file
     
@@ -200,11 +217,13 @@ async def remove_file(slot: int) -> PublicFileMeta:
         HTTPException: 400 if slot is not in ALLOWED_SLOTS.
         HTTPException: 404 if no file exists in the slot.
     """
+    
     log.debug("DELETE /files/%d - removing file in slot %d", slot, slot)
     if slot not in ALLOWED_SLOTS:
         log.warning("invalid slot requested for removal: %d (allowed: %s)", slot, ALLOWED_SLOTS)
         raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
     file_meta = await clip_db_handler.get_file_meta_in_slot(slot)
+    print(f"file_meta in slot {slot}: {file_meta}")
     if not file_meta:
         log.warning("no file to remove in slot %d", slot)
         raise HTTPException(status_code=404, detail="file not found")
@@ -230,6 +249,7 @@ async def get_text():
     Returns:
         dict: ``{"text": str}`` with the current text, or 204 if no saves exist.
     """
+    
     log.debug("GET /text - getting the current text in textbox")
     text = await clip_db_handler.get_last_save()
     if text is None:
@@ -251,6 +271,7 @@ async def save_text(body: TextBody):
     Returns:
         dict: ``{"text": str}`` with the saved text.
     """
+    
     log.debug("POST /text - uploading text to db: %s", body.text)
     last = await clip_db_handler.get_last_save()
     if body.text == last:
@@ -270,6 +291,7 @@ async def undo_text():
     Returns:
         dict: ``{"text": str}`` with the text after undo, or 204 if history is empty.
     """
+    
     log.debug("POST /text/undo - going back one save in textbox")
     result = await clip_db_handler.textbox_ctrl_z()
     if result is None:

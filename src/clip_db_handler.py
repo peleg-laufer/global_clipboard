@@ -8,6 +8,7 @@ from pymongo import AsyncMongoClient
 import asyncio
 import mimetypes
 import constants
+from constants import ALLOWED_SLOTS, PRE_EXISTING_FILES_SLOT, ALLOWED_TEXT_POSITIONS, CONNECTION_STRING, FILES_PATH, DB_LOG_FILE_PATH
 import logging
 from pymongo.errors import DuplicateKeyError
 
@@ -61,22 +62,11 @@ class TakenSlotError(Exception):
         self.slot = slot
 
 
-logging.basicConfig(level=logging.INFO, filemode="w", filename=constants.DB_LOG_FILE_PATH,
-                    format="%(asctime)s - %(levelname)s - %(message)s")
-log = logging.getLogger(__name__)
-FILES_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "files")
-
-log.info("booting up server in %s", os.path.abspath(__file__))
-log.info("files path for server: %s", FILES_PATH)
-ALLOWED_SLOTS = constants.ALLOWED_SLOTS
-PRE_EXISTING_FILES_SLOT = constants.PRE_EXISTING_FILES_SLOT
-ALLOWED_TEXT_POSITIONS = constants.ALLOWED_TEXT_POSITIONS
-CONNECTION_STRING = constants.CONNECTION_STRING
-
 client = AsyncMongoClient(CONNECTION_STRING)
 db = client["clipboard_db"]
 files_collection = db["files_meta"]
 textbox_collection = db["textbox"]
+log = logging.getLogger(__name__)
 
 
 
@@ -86,6 +76,13 @@ async def setup_db():
     Creates the files directory if missing, verifies the MongoDB connection,
     and delegates to collection-specific setup and validation functions.
     """
+    log.setLevel(logging.DEBUG)
+    handler = logging.FileHandler(DB_LOG_FILE_PATH, mode="w")
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    log.addHandler(handler)
+    log.info("booting up server in %s", os.path.abspath(__file__))
+    log.info("files path for server: %s", FILES_PATH)
     log.debug("setting up mongodb")
     # create file dir
     if not os.path.exists(FILES_PATH):
@@ -119,6 +116,7 @@ async def fix_positions():
         positions {2: "first", 3: "second", 3: "duplicate"}
         become    {0: "first", 1: "second"}
     """
+
     log.debug("fixing positions of textbox texts")
     all_saves = await textbox_collection.find({}, {"_id": 0}).sort("position", 1).to_list()
     # deduplicate: keep first occurrence of each position
@@ -162,7 +160,7 @@ async def get_last_save() -> str:
     if doc:
         log.debug("last save returned: %s", doc["text"])
         return doc["text"]
-    log.debug("no text foun to return")
+    log.debug("no text found to return")
     return None
 
 async def textbox_ctrl_z() -> str:
@@ -445,6 +443,9 @@ async def replace_file(slot: int, new_file: UploadFile) -> FileMeta:
     if slot not in ALLOWED_SLOTS:
         raise IllegalSlotError(f"slot {slot} given is illegal value, not in {ALLOWED_SLOTS}")
     file_in_slot = await get_file_meta_in_slot(slot)
+    if not file_in_slot:
+        log.warning("slot %d is empty, cannot replace", slot)
+        return None
     removed = await remove_file(file_in_slot.file_uuid)
     if removed:
         log.debug("removed '%s' from slot %d", removed['file_name'], slot)
