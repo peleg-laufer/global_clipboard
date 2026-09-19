@@ -1,5 +1,7 @@
 import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     ALLOWED_SLOTS: frozenset[int] = frozenset({0, 1, 2})

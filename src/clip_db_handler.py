@@ -1,16 +1,14 @@
-import os
-from typing import List, Optional, Literal
-from enum import IntEnum
-from pydantic import BaseModel,Field
-from fastapi import UploadFile
-import uuid
-from pymongo import AsyncMongoClient
-import asyncio
-import mimetypes
-import constants
-from constants import settings
 import logging
-from pymongo.errors import DuplicateKeyError
+import mimetypes
+import os
+import uuid
+
+from fastapi import UploadFile
+from pydantic import BaseModel, Field
+from pymongo import AsyncMongoClient
+
+from constants import settings
+import aiofiles
 
 
 class PublicFileMeta(BaseModel):
@@ -178,7 +176,7 @@ async def textbox_ctrl_z() -> str:
     return await get_last_save()
 
 
-async def get_all_textbox_history() -> List[TextSave]:
+async def get_all_textbox_history() -> list[TextSave]:
     """Returns all saved textbox states ordered by position.
 
     Returns:
@@ -322,7 +320,7 @@ async def get_file_meta_in_slot(slot: int) -> FileMeta:
         return None
 
 
-async def get_all_files_meta(with_pre_existing: bool = False) -> List[FileMeta]:
+async def get_all_files_meta(with_pre_existing: bool = False) -> list[FileMeta]:
     """Returns metadata for all files in the collection.
 
     Args:
@@ -352,7 +350,7 @@ async def get_all_files_meta(with_pre_existing: bool = False) -> List[FileMeta]:
         log.debug("returning %d files (slots only)", len(files_filemeta))
         return files_filemeta
 
-async def get_pre_existing_files_meta() -> List[PublicFileMeta]:
+async def get_pre_existing_files_meta() -> list[PublicFileMeta]:
     """Returns metadata of all pre-existing files (not assigned to any slot).
 
     Returns:
@@ -401,8 +399,8 @@ async def add_file(uploaded_file: UploadFile, slot: int) -> FileMeta:
                                  file_path=new_file_path,
                                  file_uuid=new_file_uuid)
     file_content = await uploaded_file.read()
-    with open(new_file_path, "wb") as new_file:
-        new_file.write(file_content)
+    async with aiofiles.open(new_file_path, "wb") as new_file:
+        await new_file.write(file_content)
     await files_collection.insert_one(new_file_metadata.model_dump())
     log.info("stored '%s' in slot %d at %s", new_file_name, slot, new_file_path)
     return new_file_metadata
@@ -430,8 +428,8 @@ async def replace_file(slot: int, new_file: UploadFile) -> FileMeta:
         return None
     removed = await remove_file(file_in_slot.file_uuid)
     if removed:
-        log.debug("removed '%s' from slot %d", removed['file_name'], slot)
-        added_file = await add_file(uploaded_file=new_file, slot=int(removed['file_slot']))
+        log.debug("removed '%s' from slot %d", removed.file_name, slot)
+        added_file = await add_file(uploaded_file=new_file, slot=int(removed.file_slot))
         return added_file
     else:
         return None
@@ -444,17 +442,16 @@ async def remove_file(uuid: str) -> FileMeta:
         uuid (str): The unique identifier of the file to delete.
 
     Returns:
-        dict | None: The deleted document as a dict, or None if no file matched the UUID.
+        FileMeta | None: The deleted document as a FileMeta instance, or None if no file matched the UUID.
     """
     log.debug("removing file with uuid: %s", uuid)
     to_remove = await files_collection.find_one_and_delete({"file_uuid": uuid}, {"_id": 0})
     if to_remove:
         path_to_remove = to_remove["file_path"]
-        if os.path.exists(path_to_remove):
-            os.remove(path_to_remove)
-            log.info("deleted file '%s' from disk and DB", to_remove["file_name"])
-        else:
-            log.warning("DB record for '%s' deleted but file not found on disk: %s", to_remove["file_name"], path_to_remove)
+        async with aiofiles.open(path_to_remove, "rb") as file:
+            await file.read()  # Read the file to ensure it's accessible
+        os.remove(path_to_remove)
+        log.info("deleted file '%s' from disk and DB", to_remove["file_name"])
         return FileMeta(**to_remove)
     else:
         return None

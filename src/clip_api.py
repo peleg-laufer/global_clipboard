@@ -1,16 +1,14 @@
-from turtle import up
 
-from fastapi import FastAPI, HTTPException, File, UploadFile, Request
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
-from enum import IntEnum
-from pydantic import BaseModel,Field
-import clip_db_handler
-from clip_db_handler import FileMeta, PublicFileMeta
-from fastapi.responses import FileResponse
-from fastapi import Response
 import logging
 from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+
+import clip_db_handler
+from clip_db_handler import PublicFileMeta
 from constants import settings
 
 
@@ -27,7 +25,6 @@ async def lifespan(app: FastAPI):
     log.info("system initialized successfully")
     yield
     # shutdown code:
-    pass
 
 api = FastAPI(lifespan=lifespan)
 
@@ -41,7 +38,7 @@ api.add_middleware(
 log = logging.getLogger(__name__)
 
 @api.get("/files/pre-existing")
-async def get_pre_existing_files_meta() -> List[PublicFileMeta]:
+async def get_pre_existing_files_meta() -> list[PublicFileMeta]:
     """Returns metadata of all pre-existing files (not assigned to any slot).
 
     Returns:
@@ -120,7 +117,7 @@ async def get_file_data(slot: int) -> FileResponse:
         
                 
 @api.get("/files")
-async def get_all_files_meta(with_pre_existing: bool = False) -> List[PublicFileMeta]:
+async def get_all_files_meta(with_pre_existing: bool = False) -> list[PublicFileMeta]:
     """Returns metadata of all files, optionally including pre-existing ones.
 
     Args:
@@ -238,8 +235,8 @@ async def remove_file(slot: int) -> PublicFileMeta:
 
 class TextBody(BaseModel):
     """Request body for text save endpoints."""
+    text: str = Field(str, description="The text to save or upload.", max_length=512)
 
-    text: str
 
 
 @api.get("/text")
