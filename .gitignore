@@ -5,3 +5,5 @@ hello world.txt
 src/try_stuff.py
 *.log
 .claude/
+src/.env
+.env

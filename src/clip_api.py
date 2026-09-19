@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi import Response
 import logging
 from contextlib import asynccontextmanager
-from constants import ALLOWED_SLOTS, PRE_EXISTING_FILES_SLOT, API_LOG_FILE_PATH
+from constants import settings
 
 
 @asynccontextmanager
@@ -19,8 +19,8 @@ async def lifespan(app: FastAPI):
     """Triggers database setup automatically when FastAPI starts."""
     await clip_db_handler.setup_db()
     # set up logging
-    log.setLevel(logging.DEBUG)
-    handler = logging.FileHandler(API_LOG_FILE_PATH, mode="w")
+    log.setLevel(settings.LOG_LEVEL)
+    handler = logging.FileHandler(settings.API_LOG_FILE_PATH, mode="w")
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
     log.addHandler(handler)
@@ -68,12 +68,12 @@ async def get_file_meta(slot: int) -> PublicFileMeta:
     
     log.debug("GET /files/%d — fetching slot metadata", slot)
 
-    if slot not in ALLOWED_SLOTS:
+    if slot not in settings.ALLOWED_SLOTS:
         # WARNING: bad client input — expected in normal operation, not a bug.
         # Use WARNING (not ERROR) for 4xx: the server did nothing wrong.
         
-        log.warning("invalid slot requested: %d (allowed: %s)", slot, ALLOWED_SLOTS)
-        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
+        log.warning("invalid slot requested: %d (allowed: %s)", slot, settings.ALLOWED_SLOTS)
+        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {settings.ALLOWED_SLOTS}")
 
     to_ret = await clip_db_handler.get_file_meta_in_slot(slot)
     if to_ret:
@@ -103,9 +103,9 @@ async def get_file_data(slot: int) -> FileResponse:
     """
     
     log.debug("GET /files/%d/download - fetching slot file data", slot)
-    if slot not in ALLOWED_SLOTS:
-        log.warning("invalid slot requested: %d (allowed: %s)", slot, ALLOWED_SLOTS)
-        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
+    if slot not in settings.ALLOWED_SLOTS:
+        log.warning("invalid slot requested: %d (allowed: %s)", slot, settings.ALLOWED_SLOTS)
+        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {settings.ALLOWED_SLOTS}")
     file_meta = await clip_db_handler.get_file_meta_in_slot(slot)
     if file_meta:
         log.debug("slot %d returning filedata for %s", slot, file_meta.file_name)
@@ -152,9 +152,9 @@ async def upload_file(uploaded_file: UploadFile, slot: int) -> PublicFileMeta:
     """
     
     log.debug("POST /files - uploading file: %s \nto slot %d", str(uploaded_file), slot)
-    if slot not in ALLOWED_SLOTS:
-        log.warning("invalid slot requested: %d (allowed: %s)", slot, ALLOWED_SLOTS)
-        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
+    if slot not in settings.ALLOWED_SLOTS:
+        log.warning("invalid slot requested: %d (allowed: %s)", slot, settings.ALLOWED_SLOTS)
+        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {settings.ALLOWED_SLOTS}")
     file_in_slot = await clip_db_handler.get_file_meta_in_slot(slot)
     if file_in_slot:
         log.warning("slot %d is taken with file: %s, cannot add file", slot, file_in_slot.file_name)
@@ -186,9 +186,9 @@ async def replace_file(new_file: UploadFile, slot: int) -> PublicFileMeta:
     """
     
     log.debug("POST /files/%d/replace - replacing file in slot: %d \nwith file: %s", slot, slot, new_file)
-    if slot not in ALLOWED_SLOTS:
-        log.warning("invalid slot requested for replacement: %d (allowed: %s)", slot, ALLOWED_SLOTS)
-        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
+    if slot not in settings.ALLOWED_SLOTS:
+        log.warning("invalid slot requested for replacement: %d (allowed: %s)", slot, settings.ALLOWED_SLOTS)
+        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {settings.ALLOWED_SLOTS}")
     added_file = await clip_db_handler.replace_file(slot,new_file)
     file_in_slot = await clip_db_handler.get_file_meta_in_slot(slot)
     if not file_in_slot:
@@ -219,11 +219,11 @@ async def remove_file(slot: int) -> PublicFileMeta:
     """
     
     log.debug("DELETE /files/%d - removing file in slot %d", slot, slot)
-    if slot not in ALLOWED_SLOTS:
-        log.warning("invalid slot requested for removal: %d (allowed: %s)", slot, ALLOWED_SLOTS)
-        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {ALLOWED_SLOTS}")
+    if slot not in settings.ALLOWED_SLOTS:
+        log.warning("invalid slot requested for removal: %d (allowed: %s)", slot, settings.ALLOWED_SLOTS)
+        raise HTTPException(status_code=400, detail=f"slot {slot} not in allowed slots: {settings.ALLOWED_SLOTS}")
     file_meta = await clip_db_handler.get_file_meta_in_slot(slot)
-    print(f"file_meta in slot {slot}: {file_meta}")
+    log.debug("removing file in slot %d: %s", slot, file_meta)
     if not file_meta:
         log.warning("no file to remove in slot %d", slot)
         raise HTTPException(status_code=404, detail="file not found")

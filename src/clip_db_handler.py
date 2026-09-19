@@ -8,7 +8,7 @@ from pymongo import AsyncMongoClient
 import asyncio
 import mimetypes
 import constants
-from constants import ALLOWED_SLOTS, PRE_EXISTING_FILES_SLOT, ALLOWED_TEXT_POSITIONS, CONNECTION_STRING, FILES_PATH, DB_LOG_FILE_PATH
+from constants import settings
 import logging
 from pymongo.errors import DuplicateKeyError
 
@@ -62,8 +62,8 @@ class TakenSlotError(Exception):
         self.slot = slot
 
 
-client = AsyncMongoClient(CONNECTION_STRING)
-db = client["clipboard_db"]
+client = AsyncMongoClient(settings.CONNECTION_STRING)
+db = client[settings.DB_NAME]
 files_collection = db["files_meta"]
 textbox_collection = db["textbox"]
 log = logging.getLogger(__name__)
@@ -77,19 +77,19 @@ async def setup_db():
     and delegates to collection-specific setup and validation functions.
     """
     log.setLevel(logging.DEBUG)
-    handler = logging.FileHandler(DB_LOG_FILE_PATH, mode="w")
+    handler = logging.FileHandler(settings.DB_LOG_FILE_PATH, mode="w")
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
     log.addHandler(handler)
     log.info("booting up server in %s", os.path.abspath(__file__))
-    log.info("files path for server: %s", FILES_PATH)
+    log.info("files path for server: %s", settings.FILES_PATH)
     log.debug("setting up mongodb")
     # create file dir
-    if not os.path.exists(FILES_PATH):
-        os.makedirs(FILES_PATH)
+    if not os.path.exists(settings.FILES_PATH):
+        os.makedirs(settings.FILES_PATH)
     # check db connection:
     await client.admin.command("ping")
-    log.info("connected mongodb client in %s", CONNECTION_STRING)
+    log.info("connected mongodb client in %s", settings.CONNECTION_STRING)
     # check and fix db:
     await files_collection_setup_and_validation()
     await textbox_collection_setup_and_validation()
@@ -209,8 +209,8 @@ async def files_collection_setup_and_validation():
 
     # verify db and files in folder match, ignoring sub-folders
     files_in_folder = []
-    for poss_file in os.listdir(FILES_PATH):
-        poss_file_path = os.path.join(FILES_PATH, poss_file)
+    for poss_file in os.listdir(settings.FILES_PATH):
+        poss_file_path = os.path.join(settings.FILES_PATH, poss_file)
         if os.path.isfile(poss_file_path): # ignoring folders
             files_in_folder.append(poss_file)
     file_str = "files in folder: "
@@ -224,7 +224,7 @@ async def files_collection_setup_and_validation():
     log.info("%s", db_files_str)    
     # adding missing files in db:
     for file_name in files_in_folder:
-        file_path = os.path.join(FILES_PATH, file_name)
+        file_path = os.path.join(settings.FILES_PATH, file_name)
         matching_files_in_db = await files_collection.find({"file_path": file_path}).to_list(None)
         if len(matching_files_in_db) == 0:  # not on db
             # adding to db
@@ -234,13 +234,13 @@ async def files_collection_setup_and_validation():
             new_file_uuid = str(uuid.uuid4())
             # renaming file to uuid
             ext = os.path.splitext(file_name)[1]
-            new_file_path = os.path.join(FILES_PATH, new_file_uuid + ext)
+            new_file_path = os.path.join(settings.FILES_PATH, new_file_uuid + ext)
             os.rename(file_path, new_file_path)
             # constracting missing FileMeta
             missing_file_meta = FileMeta(file_name=file_name,
                                          file_type=str(file_mime_type),
                                          file_size=os.path.getsize(new_file_path),
-                                         file_slot=PRE_EXISTING_FILES_SLOT, # not it any slot
+                                         file_slot=settings.PRE_EXISTING_FILES_SLOT, # not it any slot
                                          file_path=new_file_path,
                                          file_uuid=new_file_uuid)
             inserted_meta = await files_collection.insert_one(missing_file_meta.model_dump())
@@ -258,22 +258,22 @@ async def files_collection_setup_and_validation():
         if not os.path.exists(file_meta.file_path):
             log.debug("deleting filemeta of %s from db", file_meta.file_name)
             await remove_file(file_meta.file_uuid)
-        elif (file_meta.file_slot not in ALLOWED_SLOTS) and file_meta.file_slot != PRE_EXISTING_FILES_SLOT:  # illegal slot
+        elif (file_meta.file_slot not in settings.ALLOWED_SLOTS) and file_meta.file_slot != settings.PRE_EXISTING_FILES_SLOT:  # illegal slot
             
             query_filter = {'file_uuid' : file_meta.file_uuid}
             update_operation = { '$set' : 
-                {'file_slot': PRE_EXISTING_FILES_SLOT}
+                {'file_slot': settings.PRE_EXISTING_FILES_SLOT}
             }
             result = await files_collection.update_one(query_filter, update_operation)
-            log.debug("file %s not in a legal slot, movied to pre_existing: %d", file_meta.file_name, PRE_EXISTING_FILES_SLOT)
+            log.debug("file %s not in a legal slot, movied to pre_existing: %d", file_meta.file_name, settings.PRE_EXISTING_FILES_SLOT)
         else:
-            if file_meta.file_slot == PRE_EXISTING_FILES_SLOT:
+            if file_meta.file_slot == settings.PRE_EXISTING_FILES_SLOT:
                 continue
             slots[file_meta.file_slot] += 1
             if slots[file_meta.file_slot] >= 2:  # more than 1 file in slot
                 query_filter = {'file_uuid' : file_meta.file_uuid}
                 update_operation = { '$set' :
-                    {'file_slot': PRE_EXISTING_FILES_SLOT}
+                    {'file_slot': settings.PRE_EXISTING_FILES_SLOT}
                 }
                 result = await files_collection.update_one(query_filter, update_operation)
 
@@ -310,9 +310,9 @@ async def get_file_meta_in_slot(slot: int) -> FileMeta:
         IllegalSlotError: If slot is not in ALLOWED_SLOTS.
     """
     log.debug(f"finding FileMeta in slot: {slot}")
-    if slot not in ALLOWED_SLOTS:
-        log.error("slot given %d not in allowed slots: %s", slot, ALLOWED_SLOTS)
-        raise IllegalSlotError(f"slot {slot} given is illegal value, not in allowed slots: {ALLOWED_SLOTS}")
+    if slot not in settings.ALLOWED_SLOTS:
+        log.error("slot given %d not in allowed slots: %s", slot, settings.ALLOWED_SLOTS)
+        raise IllegalSlotError(f"slot {slot} given is illegal value, not in allowed slots: {settings.ALLOWED_SLOTS}")
     doc = await files_collection.find_one({"file_slot": slot}, {"_id": 0})
     if doc:
         log.debug("found file %s in slot %d", FileMeta(**doc).file_name, slot)
@@ -321,24 +321,6 @@ async def get_file_meta_in_slot(slot: int) -> FileMeta:
         log.debug("slot %d is empty", slot)
         return None
 
-async def get_file_path(uuid: str) -> str:
-    """Returns the local filesystem path of a file identified by UUID.
-
-    Args:
-        uuid (str): The unique identifier of the file.
-
-    Returns:
-        str | None: Absolute path to the file, or None if not found.
-    """
-    log.debug("finding path of %s", uuid)
-    file_meta = await get_file_meta(uuid)
-    if file_meta:
-        log.debug("found path: %s for uuid %s", file_meta.file_path, uuid)
-        return file_meta.file_path
-    else:
-        log.warning("no file matching uuid %s", uuid)
-        return None
-        
 
 async def get_all_files_meta(with_pre_existing: bool = False) -> List[FileMeta]:
     """Returns metadata for all files in the collection.
@@ -377,7 +359,7 @@ async def get_pre_existing_files_meta() -> List[PublicFileMeta]:
         List[PublicFileMeta]: Metadata of all files with slot -1.
     """
     log.debug("getting pre-existing files meta")
-    cursor = files_collection.find({"file_slot": PRE_EXISTING_FILES_SLOT}, {"_id": 0})
+    cursor = files_collection.find({"file_slot": settings.PRE_EXISTING_FILES_SLOT}, {"_id": 0})
     files_dict = await cursor.to_list()
     files_filemeta = []
     for file_dict in files_dict:
@@ -399,16 +381,16 @@ async def add_file(uploaded_file: UploadFile, slot: int) -> FileMeta:
         IllegalSlotError: If slot is not in ALLOWED_SLOTS or the slot is already taken.
     """
     log.debug("adding file '%s' to slot %d", uploaded_file.filename, slot)
-    if slot not in ALLOWED_SLOTS:
-        raise IllegalSlotError(f"slot {slot} given is illegal value, not in {ALLOWED_SLOTS}")
+    if slot not in settings.ALLOWED_SLOTS:
+        raise IllegalSlotError(f"slot {slot} given is illegal value, not in {settings.ALLOWED_SLOTS}")
     file_in_slot = await get_file_meta_in_slot(slot)
     if isinstance(file_in_slot, FileMeta):
         log.warning("slot %d is taken by '%s'", slot, file_in_slot.file_name)
-        raise IllegalSlotError(f"slot {slot} is taken by {file_in_slot.file_name}")
+        raise TakenSlotError(f"slot {slot} is taken by {file_in_slot.file_name}")
     # setting up metadata:
     new_file_uuid = str(uuid.uuid4())
     ext = os.path.splitext(uploaded_file.filename)[1]
-    new_file_path = os.path.join(FILES_PATH, new_file_uuid + ext)
+    new_file_path = os.path.join(settings.FILES_PATH, new_file_uuid + ext)
     new_file_name = uploaded_file.filename
     new_file_size = uploaded_file.size
     new_file_type = uploaded_file.content_type
@@ -440,8 +422,8 @@ async def replace_file(slot: int, new_file: UploadFile) -> FileMeta:
         IllegalSlotError: If slot is not in ALLOWED_SLOTS.
     """
     log.debug("replacing slot %d with '%s'", slot, new_file.filename)
-    if slot not in ALLOWED_SLOTS:
-        raise IllegalSlotError(f"slot {slot} given is illegal value, not in {ALLOWED_SLOTS}")
+    if slot not in settings.ALLOWED_SLOTS:
+        raise IllegalSlotError(f"slot {slot} given is illegal value, not in {settings.ALLOWED_SLOTS}")
     file_in_slot = await get_file_meta_in_slot(slot)
     if not file_in_slot:
         log.warning("slot %d is empty, cannot replace", slot)
@@ -473,39 +455,7 @@ async def remove_file(uuid: str) -> FileMeta:
             log.info("deleted file '%s' from disk and DB", to_remove["file_name"])
         else:
             log.warning("DB record for '%s' deleted but file not found on disk: %s", to_remove["file_name"], path_to_remove)
-        return to_remove
+        return FileMeta(**to_remove)
     else:
         return None
 
-
-# --------------------------------------------------------------------
-# EXCEPTION HANDLING + LOGGING — REFERENCE EXAMPLE (service layer)
-# Not wired in. Shows: domain exception with custom attribute, narrow
-# except + log.warning + chained re-raise, broad except + log.exception
-# + bare re-raise. Pair with the route example in clip_api.py.
-# --------------------------------------------------------------------
-# log = logging.getLogger(__name__)
-#
-# class FileStoreError(Exception):
-#     """Raised when the file store can't complete an operation."""
-#     def __init__(self, message: str, *, slot: int | None = None):
-#         super().__init__(message)
-#         self.slot = slot   # custom attribute travels with the exception
-#
-# async def add_file_example(slot: int, upload: UploadFile) -> FileMeta:
-#     if slot not in ALLOWED_SLOTS:
-#         raise IllegalSlotError(f"slot {slot} not in {ALLOWED_SLOTS}")
-#
-#     meta = FileMeta(file_name=upload.filename, file_slot=slot, ...)
-#     try:
-#         await files_collection.insert_one(meta.model_dump())
-#     except DuplicateKeyError as e:
-#         log.warning("uuid collision in slot %d: %s", slot, meta.file_uuid)
-#         raise FileStoreError("duplicate file uuid", slot=slot) from e
-#     except PyMongoError:
-#         log.exception("mongo failed inserting meta for slot %d", slot)
-#         raise   # propagate as-is, route will translate
-#     return meta
-# --------------------------------------------------------------------
-# END EXAMPLE
-# --------------------------------------------------------------------

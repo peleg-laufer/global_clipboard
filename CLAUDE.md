@@ -8,6 +8,45 @@ global_clipboard is a self-hosted, single-user clipboard sync backend (shared te
 
 **Finishing scope, in order:** bug fixes + cleanup (env-based config, lifespan, requirements.txt, ruff) → pytest suite against a test MongoDB → Docker + docker-compose → GitHub Actions CI → README rewrite. Timebox is ~1.5 days; CI is the first thing cut if behind. Nothing beyond this scope.
 
+## Plan
+
+Full version with research hints: `~/.claude/plans/i-want-to-finish-zesty-hippo.md`.
+
+### Step 0: Split Flutter client to its own repo — done
+
+### Step 1: Bug fixes + cleanup
+- Bug 1 — fixed. `replace_file` crashes on an empty slot (should be 404).
+- Bug 2 — fixed. Logging goes to one file; `api_log.log` never created (`basicConfig` only works once).
+- Bug 3 — `get_file_path` is broken (`PublicFileMeta` has no `file_path`) and unused. Fix or delete.
+- Bug 4 — `TakenSlotError` never raised; `add_file` raises `IllegalSlotError` for a taken slot. Docstring is copy-pasted.
+- Bug 5 — 512-char text limit not enforced (`TextBody.text` needs `max_length`).
+- Bug 6 — `remove_file` annotated `-> FileMeta` but returns a dict.
+- Cleanup 7 — settings (Mongo URL, DB name, files dir, log level) from env vars with defaults.
+- Cleanup 8 — replace `@api.on_event("startup")` with `lifespan`.
+- Cleanup 9 — pinned `requirements.txt`, add `ruff`, remove unused imports.
+- Cleanup 10 — delete "REFERENCE EXAMPLE" block and `[ADDED]` comment.
+- Optional 11 — exception handlers mapping `IllegalSlotError` → 400, `TakenSlotError` → 409.
+- **Done when:** server boots, bugs confirmed fixed, `ruff check src` clean.
+
+### Step 2: pytest suite
+- `tests/conftest.py`, `tests/test_text.py`, `tests/test_files.py`, pytest config.
+- Test DB dropped between tests; files dir in `tmp_path`.
+- Gotcha: `AsyncMongoClient` created at import time → "attached to a different loop" errors.
+- **Done when:** `pytest` green against local Mongo.
+- **End of day 1: tests not done → CI is cut.**
+
+### Step 3: Docker + compose
+- `Dockerfile`, `.dockerignore`, `docker-compose.yml` (api + mongo, named volumes, healthcheck).
+- **Done when:** `docker compose up` works and uploads survive `down && up`.
+
+### Step 4: GitHub Actions CI (cut if behind)
+- `.github/workflows/ci.yml`: install → `ruff check` → `pytest`, Mongo as a service container.
+- **Done when:** green run on `main`, badge renders.
+
+### Step 5: README + GitHub polish
+- Remove Flutter content, link client repo, add Docker quickstart, tests section, CI badge, fix project structure.
+- Repo description, topics, pin.
+
 ## Working agreement (how to collaborate on this project)
 
 This was explicitly negotiated with the user and should shape how you operate here, not just what you build:
