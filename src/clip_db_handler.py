@@ -3,12 +3,12 @@ import mimetypes
 import os
 import uuid
 
+import aiofiles
 from fastapi import UploadFile
 from pydantic import BaseModel, Field
 from pymongo import AsyncMongoClient
 
 from constants import settings
-import aiofiles
 
 
 class PublicFileMeta(BaseModel):
@@ -59,13 +59,26 @@ class TakenSlotError(Exception):
         super().__init__(message)
         self.slot = slot
 
-
-client = AsyncMongoClient(settings.CONNECTION_STRING)
-db = client[settings.DB_NAME]
-files_collection = db["files_meta"]
-textbox_collection = db["textbox"]
 log = logging.getLogger(__name__)
+client = None
+db = None
+files_collection = None
+textbox_collection = None
 
+
+async def connect_to_db():
+    """Connects to the database."""
+    global client, db, files_collection, textbox_collection
+    client = AsyncMongoClient(settings.CONNECTION_STRING)
+    db = client[settings.DB_NAME]
+    files_collection = db["files_meta"]
+    textbox_collection = db["textbox"]
+    
+async def disconnect_from_db():
+    """Disconnects from the database."""
+    if client:
+        await client.close()
+        log.info("disconnected mongodb client")
 
 
 async def setup_db():
@@ -74,7 +87,9 @@ async def setup_db():
     Creates the files directory if missing, verifies the MongoDB connection,
     and delegates to collection-specific setup and validation functions.
     """
+    await connect_to_db()
     log.setLevel(logging.DEBUG)
+    log.handlers.clear()
     handler = logging.FileHandler(settings.DB_LOG_FILE_PATH, mode="w")
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
@@ -241,7 +256,7 @@ async def files_collection_setup_and_validation():
                                          file_slot=settings.PRE_EXISTING_FILES_SLOT, # not it any slot
                                          file_path=new_file_path,
                                          file_uuid=new_file_uuid)
-            inserted_meta = await files_collection.insert_one(missing_file_meta.model_dump())
+            await files_collection.insert_one(missing_file_meta.model_dump())
         elif len(matching_files_in_db) >= 2:
             # delete duplicates
             log.debug("file: %s has duplicate metas on db", file_name)
@@ -262,7 +277,7 @@ async def files_collection_setup_and_validation():
             update_operation = { '$set' : 
                 {'file_slot': settings.PRE_EXISTING_FILES_SLOT}
             }
-            result = await files_collection.update_one(query_filter, update_operation)
+            await files_collection.update_one(query_filter, update_operation)
             log.debug("file %s not in a legal slot, movied to pre_existing: %d", file_meta.file_name, settings.PRE_EXISTING_FILES_SLOT)
         else:
             if file_meta.file_slot == settings.PRE_EXISTING_FILES_SLOT:
@@ -273,7 +288,7 @@ async def files_collection_setup_and_validation():
                 update_operation = { '$set' :
                     {'file_slot': settings.PRE_EXISTING_FILES_SLOT}
                 }
-                result = await files_collection.update_one(query_filter, update_operation)
+                await files_collection.update_one(query_filter, update_operation)
 
 
 

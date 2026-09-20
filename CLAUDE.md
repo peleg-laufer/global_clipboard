@@ -28,12 +28,10 @@ Full version with research hints: `~/.claude/plans/i-want-to-finish-zesty-hippo.
 - Optional 11 — exception handlers mapping `IllegalSlotError` → 400, `TakenSlotError` → 409.
 - **Done when:** server boots, bugs confirmed fixed, `ruff check src` clean.
 
-### Step 2: pytest suite
-- `tests/conftest.py`, `tests/test_text.py`, `tests/test_files.py`, pytest config.
-- Test DB dropped between tests; files dir in `tmp_path`.
-- Gotcha: `AsyncMongoClient` created at import time → "attached to a different loop" errors.
-- **Done when:** `pytest` green against local Mongo.
-- **End of day 1: tests not done → CI is cut.**
+### Step 2: pytest suite — done
+- `tests/conftest.py` (one `client` fixture: monkeypatched settings, test DB dropped around each test, files dir in `tmp_path`) and `tests/test_clip_api.py` (24 tests, text + files + pre-existing, in one file rather than the planned split). `pytest.ini` sets `pythonpath = src`.
+- The loop gotcha is handled by `with TestClient(api)`, which runs lifespan (and so `connect_to_db`) on the right loop.
+- Tests landed on day 1, so **CI stays in scope**.
 
 ### Step 3: Docker + compose
 - `Dockerfile`, `.dockerignore`, `docker-compose.yml` (api + mongo, named volumes, healthcheck).
@@ -62,13 +60,17 @@ This was explicitly negotiated with the user and should shape how you operate he
 From `src/`:
 
 ```bash
-pip install fastapi "pymongo[srv]" pydantic python-multipart
-python -m fastapi dev clip_api.py       # dev server with reload, http://localhost:8000
+pip install -r requirements-dev.txt     # runtime deps + pytest/ruff/fastapi-cli
+python -m fastapi dev src/clip_api.py   # dev server with reload, http://localhost:8000
+pytest                                  # from the repo root, needs a local Mongo
+ruff check src tests
 ```
 
-- Requires MongoDB running on `localhost:27017` (see `constants.CONNECTION_STRING`).
+- `requirements.txt` is runtime only (what the Docker image installs); `requirements-dev.txt` pulls it in via `-r` and adds the tooling. CI installs the dev file.
+- Requires MongoDB running on `localhost:27017` (see `settings.CONNECTION_STRING`).
+- Config: every setting in `src/constants.py` has a default anchored to the repo, not the working directory. Override via real env vars or `src/.env` (gitignored); env vars win, which is how compose will inject them. `.env.example` is the committed reference.
 - Interactive API docs: `http://localhost:8000/docs`.
-- No test suite, requirements file, linter, Dockerfile, or CI exists yet; they're in progress (see scope above). Update this section as they land.
+- No Dockerfile or CI exists yet; they're next (see scope above). Update this section as they land.
 
 ## Architecture
 

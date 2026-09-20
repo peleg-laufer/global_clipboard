@@ -25,6 +25,7 @@ async def lifespan(app: FastAPI):
     log.info("system initialized successfully")
     yield
     # shutdown code:
+    await clip_db_handler.disconnect_from_db()
 
 api = FastAPI(lifespan=lifespan)
 
@@ -235,7 +236,7 @@ async def remove_file(slot: int) -> PublicFileMeta:
 
 class TextBody(BaseModel):
     """Request body for text save endpoints."""
-    text: str = Field(str, description="The text to save or upload.", max_length=512)
+    text: str = Field(..., description="The text to save or upload.", max_length=512)
 
 
 
