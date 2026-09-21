@@ -1,0 +1,13 @@
+tests/
+src/__pycache__/
+src/*.log
+.pytest_cache/
+.ruff_cache/
+files/
+*.log
+.claude/
+src/.env
+.env
+.gitignore
+CLAUDE.md
+.git/

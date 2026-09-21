@@ -7,3 +7,5 @@ src/try_stuff.py
 .claude/
 src/.env
 .env
+.pytest_cache/
+.ruff_cache/
