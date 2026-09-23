@@ -3,8 +3,8 @@ services:
     depends_on:
       clip_db:
         condition: service_healthy
+    restart: unless-stopped
     build:
-      restart: unless-stopped
       context: .
       dockerfile: Dockerfile
     environment:

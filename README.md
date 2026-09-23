@@ -1,90 +1,66 @@
 # global_clipboard
 
-> Sync text and files across your devices - fast and easy.
+**Self-hosted clipboard sync. Copy text or a file on one device, pick it up on any other — no third-party account, no cloud, runs on your own network.**
+
+`Async REST API` · `FastAPI` · `Pydantic v2` · `MongoDB` · `Docker Compose` · `pytest` · `GitHub Actions` · `OpenAPI`
 
 [![Python](https://img.shields.io/badge/Python-3.14-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.11x-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-8.x-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.14x-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-7.0-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/peleg-laufer/global_clipboard/actions/workflows/python-app.yml/badge.svg)](https://github.com/peleg-laufer/global_clipboard/actions/workflows/python-app.yml)
 
----
+![demo](docs/demo.gif)
 
-## About
+<!--
+TO RECORD THE DEMO GIF (replaces the line above):
+  docker compose down -v
+  docker compose up -d
+  curl -X POST localhost:8000/text -H "Content-Type: application/json" -d "{\"text\":\"hello from my laptop\"}"
+  curl localhost:8000/text
+Recorder: ScreenToGif (Windows) or asciinema + agg. Save as docs/demo.gif.
+Keep it under ~20s and ~3MB so it loads before the reader scrolls past.
+-->
 
-global_clipboard is a self-hosted clipboard sync backend. It keeps a shared text buffer (with undo history) and three file slots in sync across all your devices: paste on your laptop, pick it up on your phone, no third-party account needed.
-
-It is an async REST API built with **FastAPI** and **MongoDB**, meant to run on a machine on your local network. Any HTTP client can use it. A cross-platform Flutter client lives in a separate repository.
-
-This project was built as a structured learning exercise in Python async web servers, REST API design, and MongoDB.
-
----
-
-## Features
-
-- **Text sync**: save and retrieve clipboard text from any device
-- **Undo history**: the last five text saves are kept; step back through them one at a time
-- **Three file slots**: upload a file to a slot, then download, replace, or delete it from any device
-- **Self-healing startup**: on boot the server reconciles the files directory with the database, so manual edits to the folder don't corrupt state
-- **Typed API**: Pydantic models validate every request and response, and OpenAPI docs are generated automatically
-
----
-
-## Tech Stack
-
-| Layer | Choice | Why |
-|---|---|---|
-| Framework | FastAPI | async-native, automatic OpenAPI docs, Pydantic integration |
-| Validation | Pydantic v2 | data models defined once, reused for DB reads and API responses |
-| Database | MongoDB (async via `pymongo`) | was familiar with SQL, wanted to try a document database |
-| Language | Python 3.14 | learning target; type hints used throughout |
-
----
-
-## Project Structure
-
-```
-global_clipboard/
-├── src/
-│   ├── clip_api.py             # FastAPI route handlers - thin, delegate to the handler
-│   ├── clip_db_handler.py      # Business logic: DB queries, file I/O, Pydantic models
-│   └── constants.py            # Slot count, text history depth, DB URI, log paths
-└── files/                      # Uploaded files, stored under UUID filenames (git-ignored)
-```
-
-Routes are kept thin by design. Handlers validate input and delegate everything else to `clip_db_handler`, which has no knowledge of HTTP and raises domain exceptions instead.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.12+
-- MongoDB running on `localhost:27017`
-
-### Installation
+## Quickstart
 
 ```bash
 git clone https://github.com/peleg-laufer/global_clipboard.git
 cd global_clipboard
-
-pip install fastapi "pymongo[srv]" pydantic python-multipart
+docker compose up -d
 ```
 
-### Run the server
+That's it — the API and its MongoDB are both up. Round-trip a clipboard entry:
 
 ```bash
-cd src
-python -m fastapi dev clip_api.py
+curl -X POST localhost:8000/text -H "Content-Type: application/json" -d '{"text":"hello from my laptop"}'
+curl localhost:8000/text
 ```
 
-The server starts on `http://localhost:8000`. On first boot it creates the `files/` directory, verifies the MongoDB connection, and reconciles any existing files with the database.
+Interactive API docs: **http://localhost:8000/docs**
 
-Interactive API docs are available at `http://localhost:8000/docs`.
+Uploads and history live in named Docker volumes, so `docker compose down` and back up keeps your data.
 
----
+## What it does
 
-## API Reference
+- **Text sync** — push clipboard text from any device, pull it from any other
+- **Undo history** — the last five saves are kept; step back through them one at a time
+- **Three file slots** — upload a file to a slot, then download, replace or delete it from anywhere
+- **Self-healing startup** — the server reconciles the files directory against the database on boot, so dropping a file into the folder by hand doesn't corrupt state
+- **Typed end to end** — Pydantic validates every request and response, and the OpenAPI schema is generated from it
+
+## How it's built
+
+Two layers, strictly separated. `src/clip_api.py` holds route handlers only: validate the slot, call the handler, translate the result into a status code. `src/clip_db_handler.py` holds all the business logic — async Mongo queries, file I/O, the Pydantic models — and knows nothing about HTTP, raising domain exceptions (`IllegalSlotError`, `TakenSlotError`) that the route layer turns into 400/404/409.
+
+- **Async throughout** — async `pymongo` for the database, `aiofiles` for disk
+- **Internal vs. public models** — `FileMeta` carries the absolute `file_path`; `PublicFileMeta` omits it, so the on-disk layout never leaks into a response
+- **Startup reconciliation** — untracked files get registered, records whose file vanished get dropped, duplicate slot claims get resolved
+- **Config from the environment** — `pydantic-settings` with defaults anchored to the repo, so real env vars (how Compose injects the DB URI) override a local `.env`
+
+<details>
+<summary><b>API reference</b></summary>
 
 ### Text
 
@@ -118,25 +94,34 @@ File metadata response shape:
 }
 ```
 
----
+Files are stored on disk under their `file_uuid`; the original filename lives only in MongoDB. Files not assigned to a slot are surfaced at `/files/pre-existing`.
 
-## Development Notes
+</details>
 
-The backend (`clip_api.py`, `clip_db_handler.py`, `constants.py`) was written by hand as the primary learning objective: working through async FastAPI patterns, MongoDB driver behavior, and REST API design decisions without code generation. The goal was to understand why things work, not just that they work.
+## Running without Docker
 
-The Flutter client (separate repository) was developed with [Claude Code](https://claude.ai/code) as a pair-programmer, so I could focus my own effort on the backend.
+Needs Python 3.14 and a MongoDB on `localhost:27017`.
 
----
+```bash
+pip install -r requirements-dev.txt     # runtime deps + pytest, ruff, fastapi-cli
+python -m fastapi dev src/clip_api.py   # dev server with reload
+```
 
-## Roadmap
+Copy `.env.example` to `src/.env` to override any setting; every one of them has a working default, so an empty file is fine.
 
-- [ ] Fix known bugs and move configuration to environment variables
-- [ ] pytest suite running against a dedicated test database
-- [ ] Docker + docker-compose for a one-command setup
-- [ ] GitHub Actions CI (lint + tests)
+## Tests
 
----
+```bash
+pytest                  # 24 tests against a throwaway database
+ruff check src tests
+```
+
+Each test gets a clean database and a temp files directory, dropped on teardown. `pytest` needs its own Mongo on `localhost:27017` — the Compose database deliberately publishes no port. Lint and tests also run in GitHub Actions on every push to `main`.
+
+## Notes
+
+Single-user and LAN-only by design — there is no auth, because it is meant to run on a machine you already trust. Built as a self-taught exercise in async Python, REST API design and document databases. The backend here is hand-written; the cross-platform Flutter client, which lives in its own repository, was built with AI assistance so I could spend my own effort on this side.
 
 ## License
 
-MIT - see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
