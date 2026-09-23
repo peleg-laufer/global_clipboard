@@ -4,6 +4,7 @@ services:
       clip_db:
         condition: service_healthy
     build:
+      restart: unless-stopped
       context: .
       dockerfile: Dockerfile
     environment:

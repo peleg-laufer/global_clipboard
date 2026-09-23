@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## About & direction
 
-global_clipboard is a self-hosted, single-user clipboard sync backend (shared text buffer + three file slots) built with **FastAPI + MongoDB**. The earlier plan to migrate to Supabase and ship to app stores was **dropped (2026-09-13)**. The goal now is to finish this as a polished **Python backend resume project**, pinned on GitHub. The Flutter client is being moved to its own repo, so this repo should read as Python.
+global_clipboard is a self-hosted, single-user clipboard sync backend (shared text buffer + three file slots) built with **FastAPI + MongoDB**. The earlier plan to migrate to Supabase and ship to app stores was **dropped (2026-09-13)**. The goal now is to finish this as a **Python backend portfolio project**, pinned on GitHub. The Flutter client is being moved to its own repo, so this repo should read as Python.
+
+**Quality bar (set 2026-09-20 — this narrowed the goal):** the project exists to show the user taught themselves these technologies, which they consider already achieved. A recruiter will barely look at it. It does **not** need to be polished or production-grade. The only standard that matters: **if someone clones the repo and runs it, it works.** Anything that doesn't serve that is out of scope — see "Deliberately not doing" below. Do not re-raise polish items as if they were defects.
 
 **Finishing scope, in order:** bug fixes + cleanup (env-based config, lifespan, requirements.txt, ruff) → pytest suite against a test MongoDB → Docker + docker-compose → GitHub Actions CI → README rewrite. Timebox is ~1.5 days; CI is the first thing cut if behind. Nothing beyond this scope.
 
@@ -14,31 +16,30 @@ Full version with research hints: `~/.claude/plans/i-want-to-finish-zesty-hippo.
 
 ### Step 0: Split Flutter client to its own repo — done
 
-### Step 1: Bug fixes + cleanup
-- Bug 1 — fixed. `replace_file` crashes on an empty slot (should be 404).
-- Bug 2 — fixed. Logging goes to one file; `api_log.log` never created (`basicConfig` only works once).
-- Bug 3 — `get_file_path` is broken (`PublicFileMeta` has no `file_path`) and unused. Fix or delete.
-- Bug 4 — `TakenSlotError` never raised; `add_file` raises `IllegalSlotError` for a taken slot. Docstring is copy-pasted.
-- Bug 5 — 512-char text limit not enforced (`TextBody.text` needs `max_length`).
-- Bug 6 — `remove_file` annotated `-> FileMeta` but returns a dict.
-- Cleanup 7 — settings (Mongo URL, DB name, files dir, log level) from env vars with defaults.
-- Cleanup 8 — replace `@api.on_event("startup")` with `lifespan`.
-- Cleanup 9 — pinned `requirements.txt`, add `ruff`, remove unused imports.
-- Cleanup 10 — delete "REFERENCE EXAMPLE" block and `[ADDED]` comment.
-- Optional 11 — exception handlers mapping `IllegalSlotError` → 400, `TakenSlotError` → 409.
-- **Done when:** server boots, bugs confirmed fixed, `ruff check src` clean.
+### Step 1: Bug fixes + cleanup — done
+- Bugs 1, 2, 3, 5, 6 — fixed (`replace_file` 404 on empty slot; two separate log files; dead `get_file_path` deleted; `TextBody.text` has `max_length=512`; `remove_file` returns a `FileMeta`).
+- Bug 4 — half done. `add_file` now raises `TakenSlotError` correctly, but `TakenSlotError`'s docstring is still `IllegalSlotError`'s, copy-pasted, and `add_file`'s docstring still claims a taken slot raises `IllegalSlotError`. **Knowingly left** under the quality bar.
+- Cleanups 7–10 — done (env-based settings, `lifespan`, pinned `requirements.txt` + `ruff`, reference block deleted).
+- Optional 11 (exception handlers) — **dropped.** Every route pre-checks the slot, so the domain exceptions are unreachable in practice.
+
+### Step 1b: Docker-era bug found 2026-09-20 — fixed
+`remove_file` crashed with `FileNotFoundError` when the file was already gone from disk — which is exactly what startup reconciliation calls it for. Reproduced in the running container: the API died on boot and stayed dead. It now guards with `os.path.exists` and logs a warning instead. Keep this path tolerant of a missing file; it is the self-healing feature the README advertises.
 
 ### Step 2: pytest suite — done
 - `tests/conftest.py` (one `client` fixture: monkeypatched settings, test DB dropped around each test, files dir in `tmp_path`) and `tests/test_clip_api.py` (24 tests, text + files + pre-existing, in one file rather than the planned split). `pytest.ini` sets `pythonpath = src`.
 - The loop gotcha is handled by `with TestClient(api)`, which runs lifespan (and so `connect_to_db`) on the right loop.
 - Tests landed on day 1, so **CI stays in scope**.
 
-### Step 3: Docker + compose
-- `Dockerfile`, `.dockerignore`, `docker-compose.yml` (api + mongo, named volumes, healthcheck).
-- **Done when:** `docker compose up` works and uploads survive `down && up`.
+### Step 3: Docker + compose — done
+- `Dockerfile` (python:3.12-slim, `PYTHONPATH=/app/src`, uvicorn), `.dockerignore`, `docker-compose.yaml` — note `.yaml`, not `.yml`.
+- Two services: `clip_api` (published on 8000) and `clip_db` (mongo:7.0, **port deliberately not published**). Named volumes `files-folder` → `/data/files` and `mongo-data` → `/data/db`. `clip_db` has a `mongosh` healthcheck; `clip_api` waits on it via `depends_on: condition: service_healthy`.
+- Compose injects `FILES_PATH` and `CONNECTION_STRING` as real env vars, which beat `src/.env` — that file is in `.dockerignore` so it never reaches the image.
+- **Verified 2026-09-20:** `docker compose up` works, API answers, and an upload survives `down && up`.
+- Because `clip_db` publishes no port, `pytest` cannot use the compose Mongo; it needs a Mongo on the host at `localhost:27017`. Accepted as-is.
 
-### Step 4: GitHub Actions CI (cut if behind)
-- `.github/workflows/ci.yml`: install → `ruff check` → `pytest`, Mongo as a service container.
+### Step 4: GitHub Actions CI — next
+- `.github/workflows/ci.yml`: install `requirements-dev.txt` → `ruff check src tests` → `pytest`, Mongo as a service container.
+- Use **Python 3.12** to match the Dockerfile. (The user's machine runs 3.14; the Dockerfile is the thing that ships.)
 - **Done when:** green run on `main`, badge renders.
 
 ### Step 5: README + GitHub polish
@@ -66,11 +67,34 @@ pytest                                  # from the repo root, needs a local Mong
 ruff check src tests
 ```
 
+Docker (from the repo root — this is the supported way to run the project):
+
+```bash
+docker compose up -d        # builds the image, starts api + mongo
+docker compose config       # validate the compose file without starting anything
+docker compose logs clip_api
+docker compose down         # keeps the named volumes, so uploads survive
+```
+
 - `requirements.txt` is runtime only (what the Docker image installs); `requirements-dev.txt` pulls it in via `-r` and adds the tooling. CI installs the dev file.
 - Requires MongoDB running on `localhost:27017` (see `settings.CONNECTION_STRING`).
 - Config: every setting in `src/constants.py` has a default anchored to the repo, not the working directory. Override via real env vars or `src/.env` (gitignored); env vars win, which is how compose will inject them. `.env.example` is the committed reference.
 - Interactive API docs: `http://localhost:8000/docs`.
-- No Dockerfile or CI exists yet; they're next (see scope above). Update this section as they land.
+- CI does not exist yet; it's next (see Step 4). Update this section when it lands.
+
+## Deliberately not doing
+
+Reviewed on 2026-09-20 and consciously dropped under the quality bar above. These are **not** open defects — don't re-report them:
+
+- Container runs as `root`; no non-root `USER` in the Dockerfile.
+- App logs go to files inside the container, so `docker compose logs` shows only uvicorn output, not `log.debug`/`log.info` calls.
+- No `HEALTHCHECK` for `clip_api` (only `clip_db` has one).
+- Stale docstrings on `TakenSlotError` and `add_file` (Bug 4 above).
+- No exception handlers for the domain exceptions (Optional 11 above).
+- `GET /files/{slot}` is annotated `-> PublicFileMeta` but returns a bare `Response` for 204, so `/docs` overstates it.
+- The `replace_file` route calls the handler before checking whether the slot was occupied. Correct, but reads backwards and costs an extra query.
+- No test for the reconciliation path (a DB record whose file vanished from disk) — the Step 1b bug was found by hand, not by the suite.
+- Dockerfile `ENV` lines sit between `COPY` and `RUN pip install` rather than above them.
 
 ## Architecture
 
@@ -85,6 +109,8 @@ ruff check src tests
 - Three slots (`0, 1, 2`), one file each. Files not assigned to a slot live at slot `-1` ("pre-existing"), surfaced via `/files/pre-existing`.
 - Files are stored on disk renamed to their `file_uuid` (+ original extension); the original `file_name` lives only in MongoDB metadata.
 - On startup, the server reconciles disk state with the DB (`setup_db` → `files_collection_setup_and_validation`): adds untracked files as slot `-1`, drops DB records with no file on disk, resolves duplicate/illegal slot assignments by moving files to `-1`. This self-healing exists because the `files/` folder can be edited manually on the host.
+- Reconciliation drops stale records by calling `remove_file`, so **`remove_file` must tolerate a file that is already missing from disk**. It used to raise there and killed startup (Step 1b).
+- `file_path` is stored in Mongo as an absolute path, so a DB and a files directory are only valid together. Changing `FILES_PATH` against an existing DB makes every record look stale and reconciliation deletes them.
 
 ### Text history model
 
@@ -97,4 +123,4 @@ Both backend files configure their own logger to separate files (`constants.API_
 
 ### Client
 
-The Flutter client (`app/flutter_front/`) is being moved to a separate repo and is out of scope here. It shares no types with the backend, so any API shape change must be mirrored there by hand.
+The Flutter client has been split out to its own repo (Step 0) and is out of scope here. It shares no types with the backend, so any API shape change must be mirrored there by hand.

@@ -463,9 +463,13 @@ async def remove_file(uuid: str) -> FileMeta:
     to_remove = await files_collection.find_one_and_delete({"file_uuid": uuid}, {"_id": 0})
     if to_remove:
         path_to_remove = to_remove["file_path"]
-        async with aiofiles.open(path_to_remove, "rb") as file:
-            await file.read()  # Read the file to ensure it's accessible
-        os.remove(path_to_remove)
+        # startup reconciliation calls this to clear the record of a file that
+        # is already gone from disk, so a missing file here is expected
+        if os.path.exists(path_to_remove):
+            os.remove(path_to_remove)
+        else:
+            log.warning("file '%s' was already missing from disk at %s",
+                        to_remove["file_name"], path_to_remove)
         log.info("deleted file '%s' from disk and DB", to_remove["file_name"])
         return FileMeta(**to_remove)
     else:
