@@ -13,15 +13,7 @@
 
 ![demo](docs/demo.gif)
 
-<!--
-TO RECORD THE DEMO GIF (replaces the line above):
-  docker compose down -v
-  docker compose up -d
-  curl -X POST localhost:8000/text -H "Content-Type: application/json" -d "{\"text\":\"hello from my laptop\"}"
-  curl localhost:8000/text
-Recorder: ScreenToGif (Windows) or asciinema + agg. Save as docs/demo.gif.
-Keep it under ~20s and ~3MB so it loads before the reader scrolls past.
--->
+
 
 ## Quickstart
 
